@@ -187,23 +187,23 @@ void showTimeLoop() {
         FastLED.clear();
         
         CRGB temperature;
-        uint8_t brightness;
+        // uint8_t brightness;
         
         if (minOfTheDay <= sunrise) {
             temperature = Candle;
-            brightness = 105;
+            // brightness = 105;
         } else if (minOfTheDay <= sunrise + 30) {
             temperature = blend(CRGB(Candle), CRGB(HighNoonSun), (minOfTheDay - sunrise) * 8);
-            brightness = 105 + (minOfTheDay - sunrise) * 5;
+            // brightness = 105 + (minOfTheDay - sunrise) * 5;
         } else if (minOfTheDay <= sunset - 30) {
             temperature = CRGB(HighNoonSun);
-            brightness = 255;
+            // brightness = 255;
         } else if (minOfTheDay <= sunset) {
             temperature = blend(CRGB(Candle), CRGB(HighNoonSun), (sunset - minOfTheDay) * 8);
-            brightness = 105 + (sunset - minOfTheDay) * 5;
+            // brightness = 105 + (sunset - minOfTheDay) * 5;
         } else {
             temperature = Candle;
-            brightness = 105;
+            // brightness = 105;
         }
         // FastLED.setTemperature(temperature);
         // temperature.nscale8_video(brightness);
@@ -312,23 +312,28 @@ void showTimeLoop() {
 }
 
 void fadeLoop() {
-    bool updateLeds = true;
+    bool updateLeds = (fadeFract != 255);
 
-    if (fadeFract <= 255 - FADE_STEP) {
-        fadeFract += FADE_STEP;
-    } else if (fadeFract != 255) {
+    if (255 - fadeFract < FADE_STEP) {
         fadeFract = 255;
     } else {
-        updateLeds = false;
+        fadeFract += FADE_STEP;
     }
 
-    // for (uint8_t step = 0; brightness != targetBrightness && step < FADE_STEP; ++step) {
     if (brightness != targetBrightness) {
         updateLeds = true;
         if (brightness < targetBrightness) {
-            ++brightness;
+            if (targetBrightness - brightness < FADE_STEP) {
+                brightness = targetBrightness;
+            } else {
+                brightness += FADE_STEP;
+            }
         } else {
-            --brightness;
+            if (brightness - targetBrightness < FADE_STEP) {
+                brightness = targetBrightness;
+            } else {
+                brightness -= FADE_STEP;
+            }
         }
     }
 
@@ -337,6 +342,18 @@ void fadeLoop() {
         nscale8(leds, NUM_LEDS, brightness);
         napplyGamma_video(leds, NUM_LEDS, 2.5);
         FastLED.show();
+    }
+}
+
+uint8_t getBrightness() {
+    illuminance = tsl2591.readIlluminance_TSL2591();
+    double result = log(illuminance + 1) * 80 - 250;
+    if (result > 255) {
+        return 255;
+    } else if (result < 0) {
+        return 0;
+    } else {
+        return result;
     }
 }
 
@@ -374,7 +391,7 @@ void setup() {
     //0b10:    High gain mode
     //0b11:    Maximum gain mode
     
-    tsl2591.parameter.gain = 0b01;
+    tsl2591.parameter.gain = 0b10;
     
     //Longer integration times also helps in very low light situations, but the measurements are slower
     
@@ -518,9 +535,8 @@ void setup() {
     } else {
         debug("TSL2591 detected!");
         Particle.variable("illuminance", illuminance);
+        brightness = targetBrightness = getBrightness();
     }
-
-
 }
 
 uint8_t sensorIdx = 0;
@@ -531,29 +547,24 @@ void loop() {
         fadeLoop();
     }
     EVERY_N_MILLISECONDS(1000) {
-        switch (sensorIdx) {
-            case 0:
-                temperature = bme280.readTempC();
-                break;
-            case 1:
-                pressure = bme280.readPressure();
-                break;
-            case 2:
-                humidity = bme280.readHumidity();
-                break;
-            case 3:
-                illuminance = tsl2591.readIlluminance_TSL2591();
+        // Don't read sensors while we are fading ... the blocking reads would cause glitches
+        if (brightness == targetBrightness && fadeFract == 255) {
+            switch (sensorIdx) {
+                case 0:
+                    temperature = bme280.readTempC();
+                    break;
+                case 1:
+                    pressure = bme280.readPressure();
+                    break;
+                case 2:
+                    humidity = bme280.readHumidity();
+            }
+            if (++sensorIdx == 3) {
+                sensorIdx = 0;
+            }
+            targetBrightness = getBrightness();
         }
-        sensorIdx = (sensorIdx + 1) & 3;
         
-        double logIlluminance = log(illuminance + 1) * 70 - 250;
-        if (logIlluminance > 255) {
-            targetBrightness = 255;
-        } else if (logIlluminance < 0) {
-            targetBrightness = 0;
-        } else {
-            targetBrightness = logIlluminance;
-        }
         debug("target %d", targetBrightness);
         // Particle.publish("temperature", String(temperature), 60, PRIVATE);
         // Particle.publish("pressure", String(pressure), 60, PRIVATE);
