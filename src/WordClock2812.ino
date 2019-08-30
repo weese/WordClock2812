@@ -89,6 +89,8 @@ CRGB leds[NUM_LEDS];
 CRGB src[NUM_LEDS];
 CRGB dst[NUM_LEDS];
 fract8 fadeFract = 255;
+fract8 brightness = 255;
+fract8 targetBrightness = 255;
 
 struct {
     uint8_t dialect:2;
@@ -204,7 +206,7 @@ void showTimeLoop() {
             brightness = 105;
         }
         // FastLED.setTemperature(temperature);
-        temperature.nscale8_video(brightness);
+        // temperature.nscale8_video(brightness);
         
         for (uint8_t row = 0; row < 10; ++row) {        
             palette[row] = temperature;//CRGB::White;
@@ -310,15 +312,31 @@ void showTimeLoop() {
 }
 
 void fadeLoop() {
+    bool updateLeds = true;
+
     if (fadeFract <= 255 - FADE_STEP) {
         fadeFract += FADE_STEP;
+    } else if (fadeFract != 255) {
+        fadeFract = 255;
+    } else {
+        updateLeds = false;
+    }
+
+    // for (uint8_t step = 0; brightness != targetBrightness && step < FADE_STEP; ++step) {
+    if (brightness != targetBrightness) {
+        updateLeds = true;
+        if (brightness < targetBrightness) {
+            ++brightness;
+        } else {
+            --brightness;
+        }
+    }
+
+    if (updateLeds) {
         blend(src, dst, leds, NUM_LEDS, fadeFract);
+        nscale8(leds, NUM_LEDS, brightness);
         napplyGamma_video(leds, NUM_LEDS, 2.5);
         FastLED.show();
-    } else if (fadeFract != 255) {
-        memcpy(leds, dst, NUM_LEDS * sizeof(CRGB));
-        FastLED.show();
-        fadeFract = 255;
     }
 }
 
@@ -505,16 +523,38 @@ void setup() {
 
 }
 
+uint8_t sensorIdx = 0;
+
 void loop() {
     EVERY_N_MILLISECONDS(20) {
         showTimeLoop();
         fadeLoop();
     }
-    EVERY_N_MILLISECONDS(5000) {
-        temperature = bme280.readTempC();
-        pressure = bme280.readPressure();
-        humidity = bme280.readHumidity();
-        illuminance = tsl2591.readIlluminance_TSL2591();
+    EVERY_N_MILLISECONDS(1000) {
+        switch (sensorIdx) {
+            case 0:
+                temperature = bme280.readTempC();
+                break;
+            case 1:
+                pressure = bme280.readPressure();
+                break;
+            case 2:
+                humidity = bme280.readHumidity();
+                break;
+            case 3:
+                illuminance = tsl2591.readIlluminance_TSL2591();
+        }
+        sensorIdx = (sensorIdx + 1) & 3;
+        
+        double logIlluminance = log(illuminance + 1) * 70 - 250;
+        if (logIlluminance > 255) {
+            targetBrightness = 255;
+        } else if (logIlluminance < 0) {
+            targetBrightness = 0;
+        } else {
+            targetBrightness = logIlluminance;
+        }
+        debug("target %d", targetBrightness);
         // Particle.publish("temperature", String(temperature), 60, PRIVATE);
         // Particle.publish("pressure", String(pressure), 60, PRIVATE);
         // Particle.publish("humidity", String(humidity), 60, PRIVATE);
