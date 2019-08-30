@@ -108,11 +108,11 @@ CRGB palette[10];
 
 
 // Log message to cloud, message is a printf-formatted string
-// void debug(String message, int value) {
-//     char msg [50];
-//     sprintf(msg, message.c_str(), value);
-//     Spark.publish("DEBUG", msg);
-// }
+void debug(String message, int value = 0) {
+    char msg [50];
+    sprintf(msg, message.c_str(), value);
+    Spark.publish("DEBUG", msg);
+}
 
 
 // namespace NSFastLED {
@@ -372,14 +372,12 @@ void setup() {
     //*************ADVANCED SETUP IS OVER - LET'S CHECK THE CHIP ID!*******
     
     if (tsl2591.init_TSL2591() != 0x50) {
-        Serial.println(F("Ops! TSL2591 could not be found!"));
+        debug("Ops! TSL2591 could not be found!");
         //while(1);
     } else {
-        Serial.println(F("TSL2591 detected!"));
+        debug("TSL2591 detected!");
     }
 
-    Serial.print(F("Illuminance in Lux:\t\t")); 
-    Serial.println(tsl2591.readIlluminance_TSL2591());
 
 }
 
@@ -387,5 +385,8 @@ void loop() {
     EVERY_N_MILLISECONDS(20) {
         showTimeLoop();
         fadeLoop();
+    }
+    EVERY_N_MILLISECONDS(1000) {
+        debug("Illuminance in Lux:\t\t%d", tsl2591.readIlluminance_TSL2591());
     }
 }
