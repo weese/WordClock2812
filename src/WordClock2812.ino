@@ -566,7 +566,7 @@ void loop() {
             targetBrightness = getBrightness();
         }
         
-        debug("target %d", targetBrightness);
+        // debug("target %d", targetBrightness);
         // Particle.publish("temperature", String(temperature), 60, PRIVATE);
         // Particle.publish("pressure", String(pressure), 60, PRIVATE);
         // Particle.publish("humidity", String(humidity), 60, PRIVATE);
