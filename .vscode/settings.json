@@ -1,0 +1,10 @@
+{
+    "extensions.ignoreRecommendations": true,
+    "files.associations": {
+        "*.ino": "cpp"
+    },
+    "particle.targetDevice": "word_clock",
+    "particle.firmwareVersion": "1.2.1-rc.3",
+    "particle.targetPlatform": "photon",
+    "cortex-debug.openocdPath": "/Users/weese/.particle/toolchains/openocd/0.10.0-particle.1/bin/openocd"
+}
