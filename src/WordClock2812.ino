@@ -106,6 +106,12 @@ uint16_t lastMinOfTheDay = 0xffff;
 
 CRGB palette[10];
 
+double illuminance = 0;
+double temperature = 0;
+double pressure = 0;
+double humidity = 0;
+
+
 
 // Log message to cloud, message is a printf-formatted string
 void debug(String message, int value = 0) {
@@ -484,12 +490,16 @@ void setup() {
         debug("Ops! BME280 could not be found!");
     } else {
         debug("BME280 detected!");
+        Particle.variable("temperature", temperature);
+        Particle.variable("pressure", pressure);
+        Particle.variable("humidity", humidity);
     }
     
     if (tsl2591.init_TSL2591() != 0x50) {
         debug("Ops! TSL2591 could not be found!");
     } else {
         debug("TSL2591 detected!");
+        Particle.variable("illuminance", illuminance);
     }
 
 
@@ -500,7 +510,14 @@ void loop() {
         showTimeLoop();
         fadeLoop();
     }
-    EVERY_N_MILLISECONDS(1000) {
-        debug("Illuminance in Lux:\t\t%d", tsl2591.readIlluminance_TSL2591());
+    EVERY_N_MILLISECONDS(5000) {
+        temperature = bme280.readTempC();
+        pressure = bme280.readPressure();
+        humidity = bme280.readHumidity();
+        illuminance = tsl2591.readIlluminance_TSL2591();
+        // Particle.publish("temperature", String(temperature), 60, PRIVATE);
+        // Particle.publish("pressure", String(pressure), 60, PRIVATE);
+        // Particle.publish("humidity", String(humidity), 60, PRIVATE);
+        // Particle.publish("illuminance", String(illuminance), 60, PRIVATE);
     }
 }
