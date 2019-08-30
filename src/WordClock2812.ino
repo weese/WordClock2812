@@ -20,6 +20,7 @@ FASTLED_USING_NAMESPACE
 #define PIXEL_TYPE NEOPIXEL
 
 #define FADE_STEP 3
+#define MIN_BRIGHTNESS 10
 
 #define LANG_OSSI       0
 #define LANG_WESSI      1
@@ -339,19 +340,19 @@ void fadeLoop() {
 
     if (updateLeds) {
         blend(src, dst, leds, NUM_LEDS, fadeFract);
-        nscale8(leds, NUM_LEDS, brightness);
         napplyGamma_video(leds, NUM_LEDS, 2.5);
+        nscale8(leds, NUM_LEDS, brightness);
         FastLED.show();
     }
 }
 
 uint8_t getBrightness() {
     illuminance = tsl2591.readIlluminance_TSL2591();
-    double result = log(illuminance + 1) * 80 - 250;
+    double result = log(illuminance + 1) * 50 - 200;
     if (result > 255) {
         return 255;
-    } else if (result < 0) {
-        return 0;
+    } else if (result < MIN_BRIGHTNESS) {
+        return MIN_BRIGHTNESS;
     } else {
         return result;
     }
