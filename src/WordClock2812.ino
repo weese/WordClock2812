@@ -190,11 +190,11 @@ void showTimeLoop() {
         CRGB temperature;
         // uint8_t brightness;
         
-        if (minOfTheDay <= sunrise) {
+        if (minOfTheDay <= sunrise - 50) {
             temperature = Candle;
             // brightness = 105;
-        } else if (minOfTheDay <= sunrise + 30) {
-            temperature = blend(CRGB(Candle), CRGB(HighNoonSun), (minOfTheDay - sunrise) * 8);
+        } else if (minOfTheDay <= sunrise) {
+            temperature = blend(CRGB(HighNoonSun), CRGB(Candle), (sunrise - minOfTheDay) * 5);
             // brightness = 105 + (minOfTheDay - sunrise) * 5;
         } else if (minOfTheDay <= sunset - 30) {
             temperature = CRGB(HighNoonSun);
