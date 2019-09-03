@@ -1,4 +1,10 @@
 // This #include statement was automatically added by the Particle IDE.
+#include <SparkJson.h>
+
+// This #include statement was automatically added by the Particle IDE.
+#include <MQTT.h>
+
+// This #include statement was automatically added by the Particle IDE.
 #include <Wire.h>
 
 // This #include statement was automatically added by the Particle IDE.
@@ -13,6 +19,16 @@
 #include <BlueDot_BME280_TSL2591.h>
 
 FASTLED_USING_NAMESPACE
+
+#define LOSANT_BROKER "broker.losant.com"
+#define LOSANT_DEVICE_ID "FILL IN YOU KEYS"
+#define LOSANT_ACCESS_KEY "FILL IN YOU KEYS"
+#define LOSANT_ACCESS_SECRET "FILL IN YOU KEYS"
+
+// Topic used to subscribe to Losant commands.
+const char * MQTT_TOPIC_COMMAND = "losant/" LOSANT_DEVICE_ID "/command";
+// Topic used to publish state to Losant.
+const char * MQTT_TOPIC_STATE = "losant/" LOSANT_DEVICE_ID "/state";
 
 // IMPORTANT: Set pixel COUNT, PIN and TYPE
 #define NUM_LEDS 114
@@ -194,13 +210,13 @@ void showTimeLoop() {
             temperature = Candle;
             // brightness = 105;
         } else if (minOfTheDay <= sunrise) {
-            temperature = blend(CRGB(HighNoonSun), CRGB(Candle), (sunrise - minOfTheDay) * 5);
+            temperature = blend(CRGB(DirectSunlight), CRGB(Candle), (sunrise - minOfTheDay) * 5);
             // brightness = 105 + (minOfTheDay - sunrise) * 5;
         } else if (minOfTheDay <= sunset - 30) {
-            temperature = CRGB(HighNoonSun);
+            temperature = CRGB(DirectSunlight);
             // brightness = 255;
         } else if (minOfTheDay <= sunset) {
-            temperature = blend(CRGB(Candle), CRGB(HighNoonSun), (sunset - minOfTheDay) * 8);
+            temperature = blend(CRGB(Candle), CRGB(DirectSunlight), (sunset - minOfTheDay) * 8);
             // brightness = 105 + (sunset - minOfTheDay) * 5;
         } else {
             temperature = Candle;
@@ -358,6 +374,58 @@ uint8_t getBrightness() {
     }
 }
 
+// Connects to the Losant MQTT broker
+
+// Callback signature for MQTT subscriptions
+void callback(char* topic, byte* payload, unsigned int length) {
+    /*Parse the command payload.*/
+    StaticJsonBuffer<200> jsonBuffer;
+    JsonObject& command = jsonBuffer.parseObject((char*)payload);
+}
+
+// MQTT client
+MQTT client(LOSANT_BROKER, 1883, callback);
+
+bool connectOnDemand() {
+    if (client.isConnected())
+        return true;
+    
+    client.connect(
+        LOSANT_DEVICE_ID,
+        LOSANT_ACCESS_KEY,
+        LOSANT_ACCESS_SECRET);
+    
+    if (client.isConnected()) {
+        debug("Connected to Losant");
+        client.subscribe(MQTT_TOPIC_COMMAND);
+        return true;
+    }
+    return false;
+}
+
+void loopLosant() {
+    if (!connectOnDemand()) {
+        return;
+    }
+    // Loop the MQTT client
+    client.loop();
+
+    // Build the json payload:
+    // { “data” : { “temperature” : val, "humidity": val, “pressure” : val, “illuminance” : val }}
+    StaticJsonBuffer<200> jsonBuffer;
+    JsonObject& root = jsonBuffer.createObject();
+    JsonObject& state = jsonBuffer.createObject();
+    state["temperature"] = temperature;
+    state["humidity"] = humidity;
+    state["pressure"] = pressure;
+    state["illuminance"] = illuminance;
+    root["data"] = state;
+
+    // Get JSON string
+    char buffer[200];
+    root.printTo(buffer, sizeof(buffer));
+    client.publish(MQTT_TOPIC_STATE, buffer);
+}
 
 
 void setup() {
@@ -550,6 +618,7 @@ void loop() {
     EVERY_N_MILLISECONDS(1000) {
         // Don't read sensors while we are fading ... the blocking reads would cause glitches
         if (brightness == targetBrightness && fadeFract == 255) {
+            targetBrightness = getBrightness();
             switch (sensorIdx) {
                 case 0:
                     temperature = bme280.readTempC();
@@ -559,11 +628,11 @@ void loop() {
                     break;
                 case 2:
                     humidity = bme280.readHumidity();
+                    loopLosant();
             }
             if (++sensorIdx == 3) {
                 sensorIdx = 0;
             }
-            targetBrightness = getBrightness();
         }
         
         // debug("target %d", targetBrightness);
