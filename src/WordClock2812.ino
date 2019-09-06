@@ -13,22 +13,30 @@
 // This #include statement was automatically added by the Particle IDE.
 #include <SparkTime.h>
 
+#include <BlueDot_BME280_TSL2591.h>
+
 // This #include statement was automatically added by the Particle IDE.
 #include <FastLED.h>
 
-#include <BlueDot_BME280_TSL2591.h>
-
 FASTLED_USING_NAMESPACE
 
+
 #define LOSANT_BROKER "broker.losant.com"
-#define LOSANT_DEVICE_ID "FILL IN YOU KEYS"
-#define LOSANT_ACCESS_KEY "FILL IN YOU KEYS"
-#define LOSANT_ACCESS_SECRET "FILL IN YOU KEYS"
+#define LOSANT_DEVICE_ID "5d6c4a0a6cdb3e0006f11f60"
+#define LOSANT_ACCESS_KEY "f21356a8-9a49-4a5f-89f5-a7467bb6857b"
+#define LOSANT_ACCESS_SECRET "4b72d91cb8e7c855b15106683173a61ef94db9be6c0d25c9bf2206c4d00bc4be"
 
 // Topic used to subscribe to Losant commands.
-const char * MQTT_TOPIC_COMMAND = "losant/" LOSANT_DEVICE_ID "/command";
+#define MQTT_TOPIC_COMMAND "losant/" LOSANT_DEVICE_ID "/command"
 // Topic used to publish state to Losant.
-const char * MQTT_TOPIC_STATE = "losant/" LOSANT_DEVICE_ID "/state";
+#define MQTT_TOPIC_STATE "losant/" LOSANT_DEVICE_ID "/state"
+
+#define HASS_BROKER "192.168.100.1"
+#define HASS_ACCESS_USER "mqtt_user"
+#define HASS_ACCESS_PASS "mqtt_pass"
+#define HASS_DEVICE_ID "wordclock"
+#define HASS_TOPIC_STATE "home/" HASS_DEVICE_ID "/status"
+#define HASS_TOPIC_SET "home/" HASS_DEVICE_ID "/set"
 
 // IMPORTANT: Set pixel COUNT, PIN and TYPE
 #define NUM_LEDS 114
@@ -121,7 +129,12 @@ LEDSystemTheme theme; // Enable custom theme
 BlueDot_BME280_TSL2591 bme280;
 BlueDot_BME280_TSL2591 tsl2591;
 
-uint16_t lastMinOfTheDay = 0xffff;
+uint16_t lastTimestamp = 0xffff;
+
+// Home Assistent state
+CRGB hassRGB = CRGB::White;
+fract8 hassBrightness = 0;
+bool hassOn = false;
 
 CRGB palette[10];
 
@@ -136,7 +149,7 @@ double humidity = 0;
 void debug(String message, int value = 0) {
     char msg [50];
     sprintf(msg, message.c_str(), value);
-    Spark.publish("DEBUG", msg);
+    Particle.publish("DEBUG", msg);
 }
 
 
@@ -166,11 +179,140 @@ void showWord(uint16_t word) {
     }
 }
 
-void showHour(uint16_t hour, bool hasUhr) {
+void showHour(uint8_t hour, bool hasUhr) {
     if (hasUhr && hour == 1) {
         showWord(WORD_EIN);
     } else {
         showWord(HOUR_WORDS[hour]);
+    }
+}
+
+void renderTime(uint8_t hour, uint8_t minute) {
+    // set minute points
+    for (uint8_t dot = 0; dot != minute % 5; ++dot) {
+        leds[dot] = palette[0];
+    }
+    
+    if (lang.fullSentence) {
+        showWord(WORD_ES);
+        showWord(WORD_IST);
+    }
+    
+    bool hasUhr = false;
+    switch (minute / 5) {
+        case 0:
+            hasUhr = true;
+            showWord(WORD_UHR);
+            break;
+        case 1:
+            showWord(WORD_FUNF);
+            showWord(WORD_NACH);
+            break;
+        case 2:
+            showWord(WORD_ZEHN);
+            showWord(WORD_NACH);
+            break;
+        case 3:
+            showWord(WORD_VIERTEL);
+            if (lang.dialect == LANG_OSSI) {
+                ++hour;
+            } else {
+                showWord(WORD_NACH);
+            }
+            break;
+        case 4:
+            if (lang.dialect == LANG_RHEIN_RUHR) {
+                showWord(WORD_ZWANZIG);
+                showWord(WORD_NACH);
+            } else {
+                showWord(WORD_ZEHN);
+                showWord(WORD_VOR);
+                showWord(WORD_HALB);
+                ++hour;
+            }
+            break;
+        case 5:
+            showWord(WORD_FUNF);
+            showWord(WORD_VOR);
+            showWord(WORD_HALB);
+            ++hour;
+            break;
+        case 6:
+            showWord(WORD_HALB);
+            ++hour;
+            break;
+        case 7:
+            showWord(WORD_FUNF);
+            showWord(WORD_NACH);
+            showWord(WORD_HALB);
+            ++hour;
+            break;
+        case 8:
+            if (lang.dialect == LANG_RHEIN_RUHR) {
+                showWord(WORD_ZWANZIG);
+                showWord(WORD_VOR);
+            } else {
+                showWord(WORD_ZEHN);
+                showWord(WORD_NACH);
+                showWord(WORD_HALB);
+            }
+            ++hour;
+            break;
+        case 9:
+            if (lang.dialect == LANG_OSSI) {
+                showWord(WORD_DREI);
+                showWord(WORD_VIERTEL);
+            } else {
+                showWord(WORD_VIERTEL);
+                showWord(WORD_VOR);
+            }
+            ++hour;
+            break;
+        case 10:
+            showWord(WORD_ZEHN);
+            showWord(WORD_VOR);
+            ++hour;
+            break;
+        case 11:
+            showWord(WORD_FUNF);
+            showWord(WORD_VOR);
+            ++hour;
+            break;
+    }
+    
+    showHour(hour % 12, hasUhr);
+}
+
+void renderTime(uint8_t hour, uint8_t minute, struct CRGB color) {
+    for (uint8_t row = 0; row < 10; ++row) {        
+        palette[row] = color;
+    }
+    renderTime(hour, minute);
+}
+
+struct CRGB computeColorOfTheDay(unsigned long currentTime) {
+	sun.setCurrentDate(rtc.year(currentTime), rtc.month(currentTime), rtc.day(currentTime));
+	
+	/* Check to see if we need to update our timezone value */
+	if (rtc.isEuroDST(currentTime))
+		sun.setTZOffset(TIMEZONE + 1);
+	else
+		sun.setTZOffset(TIMEZONE);
+	
+    uint16_t sunrise = sun.calcSunrise();
+    uint16_t sunset = sun.calcSunset();
+    uint16_t minOfTheDay = rtc.hour(currentTime) * 60 + rtc.minute(currentTime);
+
+    if (minOfTheDay <= sunrise - 50) {
+        return Candle;
+    } else if (minOfTheDay <= sunrise) {
+        return blend(CRGB(DirectSunlight), CRGB(Candle), (sunrise - minOfTheDay) * 5);
+    } else if (minOfTheDay <= sunset - 30) {
+        return CRGB(DirectSunlight);
+    } else if (minOfTheDay <= sunset) {
+        return blend(CRGB(Candle), CRGB(DirectSunlight), (sunset - minOfTheDay) * 8);
+    } else {
+        return Candle;
     }
 }
 
@@ -179,149 +321,20 @@ void showTimeLoop() {
     uint8_t minute = rtc.minute(currentTime);
     uint8_t hour = rtc.hour(currentTime);
     
-    uint16_t minOfTheDay = hour * 60 + minute;
-    if (lastMinOfTheDay != minOfTheDay) {
-        lastMinOfTheDay = minOfTheDay;
-        
-		sun.setCurrentDate(rtc.year(currentTime), rtc.month(currentTime), rtc.day(currentTime));
-		
-		/* Check to see if we need to update our timezone value */
-		if (rtc.isEuroDST(currentTime))
-			sun.setTZOffset(TIMEZONE + 1);
-		else
-			sun.setTZOffset(TIMEZONE);
-		
-        uint16_t sunrise = sun.calcSunrise();
-        uint16_t sunset = sun.calcSunset();
-
-    // 	debug("Sunrise is %d", sunrise);
-    // 	debug("Sunset is %d", sunset);
+    uint16_t timestamp = (hour << 8) | minute;
+    if (lastTimestamp != timestamp) {
+        lastTimestamp = timestamp;
 
         // take a snapshot of the current state as source for fading
         nblend(src, dst, NUM_LEDS, fadeFract);
         fadeFract = 0;
-
         FastLED.clear();
-        
-        CRGB temperature;
-        // uint8_t brightness;
-        
-        if (minOfTheDay <= sunrise - 50) {
-            temperature = Candle;
-            // brightness = 105;
-        } else if (minOfTheDay <= sunrise) {
-            temperature = blend(CRGB(DirectSunlight), CRGB(Candle), (sunrise - minOfTheDay) * 5);
-            // brightness = 105 + (minOfTheDay - sunrise) * 5;
-        } else if (minOfTheDay <= sunset - 30) {
-            temperature = CRGB(DirectSunlight);
-            // brightness = 255;
-        } else if (minOfTheDay <= sunset) {
-            temperature = blend(CRGB(Candle), CRGB(DirectSunlight), (sunset - minOfTheDay) * 8);
-            // brightness = 105 + (sunset - minOfTheDay) * 5;
+
+        if (hassOn) {
+            renderTime(hour, minute, hassRGB);
         } else {
-            temperature = Candle;
-            // brightness = 105;
+            renderTime(hour, minute, computeColorOfTheDay(currentTime));
         }
-        // FastLED.setTemperature(temperature);
-        // temperature.nscale8_video(brightness);
-        
-        for (uint8_t row = 0; row < 10; ++row) {        
-            palette[row] = temperature;//CRGB::White;
-        }
-        
-        // set minute points
-        for (uint8_t dot = 0; dot != minute % 5; ++dot) {
-            leds[dot] = palette[0];
-        }
-        
-        if (lang.fullSentence) {
-            showWord(WORD_ES);
-            showWord(WORD_IST);
-        }
-        
-        bool hasUhr = false;
-        switch (minute / 5) {
-            case 0:
-                hasUhr = true;
-                showWord(WORD_UHR);
-                break;
-            case 1:
-                showWord(WORD_FUNF);
-                showWord(WORD_NACH);
-                break;
-            case 2:
-                showWord(WORD_ZEHN);
-                showWord(WORD_NACH);
-                break;
-            case 3:
-                showWord(WORD_VIERTEL);
-                if (lang.dialect == LANG_OSSI) {
-                    ++hour;
-                } else {
-                    showWord(WORD_NACH);
-                }
-                break;
-            case 4:
-                if (lang.dialect == LANG_RHEIN_RUHR) {
-                    showWord(WORD_ZWANZIG);
-                    showWord(WORD_NACH);
-                } else {
-                    showWord(WORD_ZEHN);
-                    showWord(WORD_VOR);
-                    showWord(WORD_HALB);
-                    ++hour;
-                }
-                break;
-            case 5:
-                showWord(WORD_FUNF);
-                showWord(WORD_VOR);
-                showWord(WORD_HALB);
-                ++hour;
-                break;
-            case 6:
-                showWord(WORD_HALB);
-                ++hour;
-                break;
-            case 7:
-                showWord(WORD_FUNF);
-                showWord(WORD_NACH);
-                showWord(WORD_HALB);
-                ++hour;
-                break;
-            case 8:
-                if (lang.dialect == LANG_RHEIN_RUHR) {
-                    showWord(WORD_ZWANZIG);
-                    showWord(WORD_VOR);
-                } else {
-                    showWord(WORD_ZEHN);
-                    showWord(WORD_NACH);
-                    showWord(WORD_HALB);
-                }
-                ++hour;
-                break;
-            case 9:
-                if (lang.dialect == LANG_OSSI) {
-                    showWord(WORD_DREI);
-                    showWord(WORD_VIERTEL);
-                } else {
-                    showWord(WORD_VIERTEL);
-                    showWord(WORD_VOR);
-                }
-                ++hour;
-                break;
-            case 10:
-                showWord(WORD_ZEHN);
-                showWord(WORD_VOR);
-                ++hour;
-                break;
-            case 11:
-                showWord(WORD_FUNF);
-                showWord(WORD_VOR);
-                ++hour;
-                break;
-        }
-        
-        showHour(hour % 12, hasUhr);
 
         // The set state will the fading destination
         memcpy(dst, leds, NUM_LEDS * sizeof(CRGB));
@@ -357,7 +370,7 @@ void fadeLoop() {
     if (updateLeds) {
         blend(src, dst, leds, NUM_LEDS, fadeFract);
         napplyGamma_video(leds, NUM_LEDS, 2.5);
-        nscale8(leds, NUM_LEDS, brightness);
+        nscale8(leds, NUM_LEDS, hassBrightness > 1 ? hassBrightness : brightness);
         FastLED.show();
     }
 }
@@ -374,17 +387,46 @@ uint8_t getBrightness() {
     }
 }
 
-// Connects to the Losant MQTT broker
+void callbackHass(char* topic, byte* payload, unsigned int length);
 
-// Callback signature for MQTT subscriptions
-void callback(char* topic, byte* payload, unsigned int length) {
-    /*Parse the command payload.*/
+// MQTT clients (connecting to Losant and Home Assistant brokers)
+MQTT client(LOSANT_BROKER, 1883, NULL);
+MQTT clientHass(HASS_BROKER, 1883, callbackHass);
+
+void sendStateHass() {
     StaticJsonBuffer<200> jsonBuffer;
-    JsonObject& command = jsonBuffer.parseObject((char*)payload);
+    JsonObject& root = jsonBuffer.createObject();
+    JsonObject& color = root.createNestedObject("color");
+
+    color["r"] = hassRGB.r;
+    color["g"] = hassRGB.g;
+    color["b"] = hassRGB.b;
+    root["state"] = (hassOn) ? "ON" : "OFF";
+
+    char buffer[200];
+    root.printTo(buffer, sizeof(buffer));
+
+    clientHass.publish(HASS_TOPIC_STATE, buffer, true);
 }
 
-// MQTT client
-MQTT client(LOSANT_BROKER, 1883, callback);
+// Callback signature for MQTT subscriptions
+void callbackHass(char* topic, byte* payload, unsigned int length) {
+    /*Parse the command payload.*/
+    StaticJsonBuffer<200> jsonBuffer;
+    JsonObject& root = jsonBuffer.parseObject((char*)payload);
+    if (root.containsKey("state")) {
+        hassOn = (strcmp(root["state"], "ON") == 0);
+    }
+    if (root.containsKey("brightness")) {
+        hassBrightness = root["brightness"];
+    }
+    if (root.containsKey("color")) {
+        JsonObject& rgb = root["color"];
+        hassRGB.setRGB(rgb["r"], rgb["g"], rgb["b"]);
+    }
+    lastTimestamp = 0xffff;
+    sendStateHass();
+}
 
 bool connectOnDemand() {
     if (client.isConnected())
@@ -398,6 +440,23 @@ bool connectOnDemand() {
     if (client.isConnected()) {
         debug("Connected to Losant");
         client.subscribe(MQTT_TOPIC_COMMAND);
+        return true;
+    }
+    return false;
+}
+
+bool connectHassOnDemand() {
+    if (clientHass.isConnected())
+        return true;
+    
+    clientHass.connect(
+        HASS_DEVICE_ID,
+        HASS_ACCESS_USER,
+        HASS_ACCESS_PASS);
+    
+    if (clientHass.isConnected()) {
+        debug("Connected to HASS");
+        clientHass.subscribe(HASS_TOPIC_SET);
         return true;
     }
     return false;
@@ -427,10 +486,18 @@ void loopLosant() {
     client.publish(MQTT_TOPIC_STATE, buffer);
 }
 
+void loopHASS() {
+    if (!connectHassOnDemand()) {
+        return;
+    }
+    // Loop the MQTT client
+    clientHass.loop();
+}
 
 void setup() {
     theme.setColor(LED_SIGNAL_CLOUD_CONNECTED, 0x00000000); // Set LED_SIGNAL_NETWORK_ON to no color
     theme.apply(); // Apply theme settings
+    Wire.setSpeed(400000);
 
     FastLED.addLeds<PIXEL_TYPE, PIXEL_PIN>(leds, NUM_LEDS);//.setCorrection(TypicalSMD5050);
     // FastLED.setBrightness(127);
@@ -442,6 +509,8 @@ void setup() {
     rtc.setTimeZone(TIMEZONE);
     rtc.setUseEuroDSTRule(true);
     sun.setPosition(LATITUDE, LONGITUDE, TIMEZONE);
+    
+    connectHassOnDemand();
     
     Wire.begin();
     bme280.parameter.I2CAddress = 0x77;                 //The BME280 is hardwired to use the I2C Address 0x77
@@ -612,6 +681,7 @@ uint8_t sensorIdx = 0;
 
 void loop() {
     EVERY_N_MILLISECONDS(20) {
+        loopHASS();
         showTimeLoop();
         fadeLoop();
     }
