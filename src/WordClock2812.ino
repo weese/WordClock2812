@@ -34,7 +34,7 @@ FASTLED_USING_NAMESPACE
 #define HASS_BROKER "192.168.100.1"
 #define HASS_ACCESS_USER "mqtt_user"
 #define HASS_ACCESS_PASS "mqtt_pass"
-#define HASS_DEVICE_ID "wordclock"
+#define HASS_DEVICE_ID "light/wordclock"
 #define HASS_TOPIC_STATE "home/" HASS_DEVICE_ID "/status"
 #define HASS_TOPIC_SET "home/" HASS_DEVICE_ID "/set"
 
