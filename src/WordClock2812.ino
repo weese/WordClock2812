@@ -1,4 +1,7 @@
 // This #include statement was automatically added by the Particle IDE.
+#include "tpm2net.h"
+
+// This #include statement was automatically added by the Particle IDE.
 #include <SparkJson.h>
 
 // This #include statement was automatically added by the Particle IDE.
@@ -129,7 +132,7 @@ LEDSystemTheme theme; // Enable custom theme
 BlueDot_BME280_TSL2591 bme280;
 BlueDot_BME280_TSL2591 tsl2591;
 
-uint16_t lastTimestamp = 0xffff;
+uint16_t lastTimestamp = UINT16_MAX;
 
 // Home Assistent state
 CRGB hassRGB = CRGB::White;
@@ -341,8 +344,15 @@ void showTimeLoop() {
     }
 }
 
+void updateLeds() {
+    blend(src, dst, leds, NUM_LEDS, fadeFract);
+    napplyGamma_video(leds, NUM_LEDS, 2.5);
+    nscale8(leds, NUM_LEDS, hassBrightness > 1 ? hassBrightness : brightness);
+    FastLED.show();
+}
+
 void fadeLoop() {
-    bool updateLeds = (fadeFract != 255);
+    bool updateRequired = (fadeFract != 255);
 
     if (255 - fadeFract < FADE_STEP) {
         fadeFract = 255;
@@ -351,7 +361,7 @@ void fadeLoop() {
     }
 
     if (brightness != targetBrightness) {
-        updateLeds = true;
+        updateRequired = true;
         if (brightness < targetBrightness) {
             if (targetBrightness - brightness < FADE_STEP) {
                 brightness = targetBrightness;
@@ -367,11 +377,8 @@ void fadeLoop() {
         }
     }
 
-    if (updateLeds) {
-        blend(src, dst, leds, NUM_LEDS, fadeFract);
-        napplyGamma_video(leds, NUM_LEDS, 2.5);
-        nscale8(leds, NUM_LEDS, hassBrightness > 1 ? hassBrightness : brightness);
-        FastLED.show();
+    if (updateRequired) {
+        updateLeds();
     }
 }
 
@@ -424,7 +431,7 @@ void callbackHass(char* topic, byte* payload, unsigned int length) {
         JsonObject& rgb = root["color"];
         hassRGB.setRGB(rgb["r"], rgb["g"], rgb["b"]);
     }
-    lastTimestamp = 0xffff;
+    lastTimestamp = UINT16_MAX;
     sendStateHass();
 }
 
@@ -675,40 +682,58 @@ void setup() {
         Particle.variable("illuminance", illuminance);
         brightness = targetBrightness = getBrightness();
     }
+    setupTpm2Net((uint8_t*)&dst[4], NUM_LEDS - 4);
 }
 
 uint8_t sensorIdx = 0;
 
+uint32_t timeLastPacketReceived = UINT32_MAX;
+
 void loop() {
-    EVERY_N_MILLISECONDS(20) {
-        loopHASS();
-        showTimeLoop();
-        fadeLoop();
-    }
-    EVERY_N_MILLISECONDS(1000) {
-        // Don't read sensors while we are fading ... the blocking reads would cause glitches
-        if (brightness == targetBrightness && fadeFract == 255) {
-            targetBrightness = getBrightness();
-            switch (sensorIdx) {
-                case 0:
-                    temperature = bme280.readTempC();
-                    break;
-                case 1:
-                    pressure = bme280.readPressure();
-                    break;
-                case 2:
-                    humidity = bme280.readHumidity();
-                    loopLosant();
-            }
-            if (++sensorIdx == 3) {
-                sensorIdx = 0;
-            }
+    bool newFrame = loopTpm2Net();
+    if (newFrame) {
+        fadeFract = 255;
+        memset(dst, 0, 4 * sizeof(CRGB));
+        updateLeds();
+        timeLastPacketReceived = millis();
+    } else {
+        if (millis() - TPM2NET_PACKET_TIMEOUT > timeLastPacketReceived) {
+            timeLastPacketReceived = UINT32_MAX;
+            lastTimestamp = UINT16_MAX;
         }
-        
-        // debug("target %d", targetBrightness);
-        // Particle.publish("temperature", String(temperature), 60, PRIVATE);
-        // Particle.publish("pressure", String(pressure), 60, PRIVATE);
-        // Particle.publish("humidity", String(humidity), 60, PRIVATE);
-        // Particle.publish("illuminance", String(illuminance), 60, PRIVATE);
+    }
+    
+    if (timeLastPacketReceived == UINT32_MAX) {
+        EVERY_N_MILLISECONDS(20) {
+            loopHASS();
+            showTimeLoop();
+            fadeLoop();
+        }
+        EVERY_N_MILLISECONDS(1000) {
+            // Don't read sensors while we are fading ... the blocking reads would cause glitches
+            if (brightness == targetBrightness && fadeFract == 255) {
+                targetBrightness = getBrightness();
+                switch (sensorIdx) {
+                    case 0:
+                        temperature = bme280.readTempC();
+                        break;
+                    case 1:
+                        pressure = bme280.readPressure();
+                        break;
+                    case 2:
+                        humidity = bme280.readHumidity();
+                        loopLosant();
+                }
+                if (++sensorIdx == 3) {
+                    sensorIdx = 0;
+                }
+            }
+            
+            // debug("target %d", targetBrightness);
+            // Particle.publish("temperature", String(temperature), 60, PRIVATE);
+            // Particle.publish("pressure", String(pressure), 60, PRIVATE);
+            // Particle.publish("humidity", String(humidity), 60, PRIVATE);
+            // Particle.publish("illuminance", String(illuminance), 60, PRIVATE);
+        }
     }
 }
