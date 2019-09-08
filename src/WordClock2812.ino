@@ -683,6 +683,8 @@ void setup() {
         brightness = targetBrightness = getBrightness();
     }
     setupTpm2Net((uint8_t*)&dst[4], NUM_LEDS - 4);
+    IPAddress myIP = WiFi.localIP();
+    debug(String("Listening for tpm2.net on ") + String(myIP) + " port %d", TPM2NET_LISTENING_PORT);
 }
 
 uint8_t sensorIdx = 0;
