@@ -417,10 +417,7 @@ void sendStateHass() {
 
     char buffer[200];
     root.printTo(buffer, sizeof(buffer));
-
-    systemLock.lock();
     clientHass.publish(HASS_TOPIC_STATE, buffer, true);
-    systemLock.unlock();
 }
 
 // Callback signature for MQTT subscriptions
