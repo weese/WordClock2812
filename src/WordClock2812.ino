@@ -146,6 +146,11 @@ double temperature = 0;
 double pressure = 0;
 double humidity = 0;
 
+Thread* measureWorker;
+Mutex systemLock = Mutex();
+
+// reset the system after 10 seconds if the application is unresponsive
+ApplicationWatchdog wd(10000, System.reset);
 
 
 // Log message to cloud, message is a printf-formatted string
@@ -413,7 +418,9 @@ void sendStateHass() {
     char buffer[200];
     root.printTo(buffer, sizeof(buffer));
 
+    systemLock.lock();
     clientHass.publish(HASS_TOPIC_STATE, buffer, true);
+    systemLock.unlock();
 }
 
 // Callback signature for MQTT subscriptions
@@ -439,42 +446,44 @@ bool connectOnDemand() {
     if (client.isConnected())
         return true;
     
+    systemLock.lock();
     client.connect(
         LOSANT_DEVICE_ID,
         LOSANT_ACCESS_KEY,
         LOSANT_ACCESS_SECRET);
     
-    if (client.isConnected()) {
+    bool bConn = client.isConnected();
+    if (bConn) {
         debug("Connected to Losant");
         client.subscribe(MQTT_TOPIC_COMMAND);
-        return true;
     }
-    return false;
+    systemLock.unlock();
+    return bConn;
 }
 
 bool connectHassOnDemand() {
     if (clientHass.isConnected())
         return true;
-    
+
+    systemLock.lock();
     clientHass.connect(
         HASS_DEVICE_ID,
         HASS_ACCESS_USER,
         HASS_ACCESS_PASS);
     
-    if (clientHass.isConnected()) {
+    bool bConn = clientHass.isConnected();
+    if (bConn) {
         debug("Connected to HASS");
         clientHass.subscribe(HASS_TOPIC_SET);
-        return true;
     }
-    return false;
+    systemLock.unlock();
+    return bConn;
 }
 
 void loopLosant() {
     if (!connectOnDemand()) {
         return;
     }
-    // Loop the MQTT client
-    client.loop();
 
     // Build the json payload:
     // { “data” : { “temperature” : val, "humidity": val, “pressure” : val, “illuminance” : val }}
@@ -490,7 +499,12 @@ void loopLosant() {
     // Get JSON string
     char buffer[200];
     root.printTo(buffer, sizeof(buffer));
+
+    // Loop the MQTT client
+    systemLock.lock();
+    client.loop();
     client.publish(MQTT_TOPIC_STATE, buffer);
+    systemLock.unlock();
 }
 
 void loopHASS() {
@@ -498,7 +512,42 @@ void loopHASS() {
         return;
     }
     // Loop the MQTT client
+    systemLock.lock();
     clientHass.loop();
+    systemLock.unlock();
+}
+
+
+uint8_t sensorIdx = 0;
+
+os_thread_return_t measureLoop(void* param) {
+    while (true) {
+        targetBrightness = getBrightness();
+        EVERY_N_MILLISECONDS(1000) {
+            // Don't read sensors while we are fading ... the blocking reads would cause glitches
+            switch (sensorIdx) {
+                case 0:
+                    temperature = bme280.readTempC();
+                    break;
+                case 1:
+                    pressure = bme280.readPressure();
+                    break;
+                case 2:
+                    humidity = bme280.readHumidity();
+                    loopLosant();
+            }
+            if (++sensorIdx == 3) {
+                sensorIdx = 0;
+            }
+            
+            // debug("target %d", targetBrightness);
+            // Particle.publish("temperature", String(temperature), 60, PRIVATE);
+            // Particle.publish("pressure", String(pressure), 60, PRIVATE);
+            // Particle.publish("humidity", String(humidity), 60, PRIVATE);
+            // Particle.publish("illuminance", String(illuminance), 60, PRIVATE);
+        }
+        os_thread_yield();
+    }
 }
 
 void setup() {
@@ -682,12 +731,14 @@ void setup() {
         Particle.variable("illuminance", illuminance);
         brightness = targetBrightness = getBrightness();
     }
+    
     setupTpm2Net((uint8_t*)&dst[4], NUM_LEDS - 4);
     IPAddress myIP = WiFi.localIP();
     debug(String("Listening for tpm2.net on ") + String(myIP) + " port %d", TPM2NET_LISTENING_PORT);
+    
+    measureWorker = new Thread(NULL,  measureLoop);
 }
 
-uint8_t sensorIdx = 0;
 
 uint32_t timeLastPacketReceived = UINT32_MAX;
 
@@ -711,31 +762,6 @@ void loop() {
             showTimeLoop();
             fadeLoop();
         }
-        EVERY_N_MILLISECONDS(1000) {
-            // Don't read sensors while we are fading ... the blocking reads would cause glitches
-            if (brightness == targetBrightness && fadeFract == 255) {
-                targetBrightness = getBrightness();
-                switch (sensorIdx) {
-                    case 0:
-                        temperature = bme280.readTempC();
-                        break;
-                    case 1:
-                        pressure = bme280.readPressure();
-                        break;
-                    case 2:
-                        humidity = bme280.readHumidity();
-                        loopLosant();
-                }
-                if (++sensorIdx == 3) {
-                    sensorIdx = 0;
-                }
-            }
-            
-            // debug("target %d", targetBrightness);
-            // Particle.publish("temperature", String(temperature), 60, PRIVATE);
-            // Particle.publish("pressure", String(pressure), 60, PRIVATE);
-            // Particle.publish("humidity", String(humidity), 60, PRIVATE);
-            // Particle.publish("illuminance", String(illuminance), 60, PRIVATE);
-        }
     }
+    os_thread_yield();
 }
