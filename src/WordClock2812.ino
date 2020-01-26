@@ -136,6 +136,7 @@ uint16_t lastTimestamp = UINT16_MAX;
 
 // Home Assistent state
 CRGB hassRGB = CRGB::White;
+uint16_t hassColorTemp = 325; // pure white
 fract8 hassBrightness = 0;
 bool hassOn = false;
 
@@ -406,19 +407,53 @@ MQTT client(LOSANT_BROKER, 1883, NULL);
 MQTT clientHass(HASS_BROKER, 1883, callbackHass);
 
 void sendStateHass() {
-    StaticJsonBuffer<200> jsonBuffer;
+    StaticJsonBuffer<300> jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
     JsonObject& color = root.createNestedObject("color");
 
     color["r"] = hassRGB.r;
     color["g"] = hassRGB.g;
     color["b"] = hassRGB.b;
+
+    root["color_temp"] = hassColorTemp;
     root["state"] = (hassOn) ? "ON" : "OFF";
 
     char buffer[200];
     root.printTo(buffer, sizeof(buffer));
     clientHass.publish(HASS_TOPIC_STATE, buffer, true);
 }
+
+
+uint8_t clamp(double x) {
+    if (x < 0) { return 0; }
+    if (x > 255) { return 255; }
+    return x;
+}
+
+// From http://www.tannerhelland.com/4435/convert-temperature-rgb-algorithm-code/
+
+    // Start with a temperature, in Kelvin, somewhere between 1000 and 40000.  (Other values may work,
+    //  but I can't make any promises about the quality of the algorithm's estimates above 40000 K.)
+    
+CRGB colorTemperatureToRGB(double kelvin) {
+    double temp = kelvin / 100.0;
+    uint8_t red, green, blue;
+    if (temp <= 66) { 
+        red = 255; 
+        green = clamp(99.4708025861 * log(temp) - 161.1195681661);
+        if (temp <= 19) {
+            blue = 0;
+        } else {
+            blue = clamp(138.5177312231 * log(temp - 10) - 305.0447927307);
+        }
+    } else {
+        red = clamp(329.698727446 * pow(temp - 60, -0.1332047592));
+        green = clamp(288.1221695283 * pow(temp - 60, -0.0755148492));
+        blue = 255;
+    }
+    return CRGB(red, green, blue);
+}
+
 
 // Callback signature for MQTT subscriptions
 void callbackHass(char* topic, byte* payload, unsigned int length) {
@@ -434,6 +469,9 @@ void callbackHass(char* topic, byte* payload, unsigned int length) {
     if (root.containsKey("color")) {
         JsonObject& rgb = root["color"];
         hassRGB.setRGB(rgb["r"], rgb["g"], rgb["b"]);
+    } else if (root.containsKey("color_temp")) {
+        hassColorTemp = root["color_temp"];
+        hassRGB = colorTemperatureToRGB(3000000.0 / hassColorTemp - 2600);
     }
     lastTimestamp = UINT16_MAX;
     sendStateHass();
