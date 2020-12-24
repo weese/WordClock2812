@@ -58,7 +58,7 @@ String particleDeviceName;
 #define LANG_WESSI      1
 #define LANG_RHEIN_RUHR 2
 
-char* langList[6] = {"Kurz Ost", "Ost", "Kurz West", "West", "Kurz Rhein-Ruhr", "Rhein-Ruhr"};
+char* langList[6] = {"Ost kurz", "Ost", "West kurz", "West", "Rhein-Ruhr kurz", "Rhein-Ruhr"};
 
 /* I'm in the midwest, so this is what I use for my home */
 #define LATITUDE        52.52437
