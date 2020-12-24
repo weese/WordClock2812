@@ -37,9 +37,14 @@ FASTLED_USING_NAMESPACE
 #define HASS_BROKER "192.168.100.1"
 #define HASS_ACCESS_USER "mqtt_user"
 #define HASS_ACCESS_PASS "mqtt_pass"
-#define HASS_DEVICE_ID "light/wordclock"
-#define HASS_TOPIC_STATE "home/" HASS_DEVICE_ID "/status"
-#define HASS_TOPIC_SET "home/" HASS_DEVICE_ID "/set"
+
+//#define HASS_TOPIC_PREFIX "light/"
+#define HASS_TOPIC_PREFIX "homeassistant/light/"
+#define HASS_TOPIC_STATE_SUFFIX "/status"
+#define HASS_TOPIC_SET_SUFFIX "/set"
+#define HASS_TOPIC_CONFIG_SUFFIX "/config"
+
+String particleDeviceName;
 
 // IMPORTANT: Set pixel COUNT, PIN and TYPE
 #define NUM_LEDS 114
@@ -52,6 +57,8 @@ FASTLED_USING_NAMESPACE
 #define LANG_OSSI       0
 #define LANG_WESSI      1
 #define LANG_RHEIN_RUHR 2
+
+char* langList[6] = {"Kurz Ost", "Ost", "Kurz West", "West", "Kurz Rhein-Ruhr", "Rhein-Ruhr"};
 
 /* I'm in the midwest, so this is what I use for my home */
 #define LATITUDE        52.52437
@@ -404,7 +411,33 @@ void callbackHass(char* topic, byte* payload, unsigned int length);
 
 // MQTT clients (connecting to Losant and Home Assistant brokers)
 MQTT client(LOSANT_BROKER, 1883, NULL);
-MQTT clientHass(HASS_BROKER, 1883, callbackHass);
+MQTT clientHass(HASS_BROKER, 1883, callbackHass, 500);
+
+void sendDiscoveryToken() {
+    StaticJsonBuffer<500> jsonBuffer;
+    JsonObject& root = jsonBuffer.createObject();
+    String topic = HASS_TOPIC_PREFIX;
+    topic += particleDeviceName;
+    char buffer[400] = "";
+    root["~"] = topic.c_str();
+    root["name"] = "WordClock";
+    root["unique_id"] = particleDeviceName.c_str();
+    root["cmd_t"] = "~" HASS_TOPIC_SET_SUFFIX;
+    root["stat_t"] = "~" HASS_TOPIC_STATE_SUFFIX;
+    root["schema"] = "json";
+    root["rgb"] = true;
+    root["brightness"] = false;
+    // root["transition"]=2;
+    root["effect"] = true;
+    JsonArray& list = root.createNestedArray("effect_list");
+    for (unsigned i = 0; i < sizeof(langList) / sizeof(langList[0]); ++i) {
+        list.add(langList[i]);
+    }
+    root.printTo(buffer, sizeof(buffer));
+
+    topic += HASS_TOPIC_CONFIG_SUFFIX;
+    clientHass.publish(topic, buffer, true);
+}
 
 void sendStateHass() {
     StaticJsonBuffer<300> jsonBuffer;
@@ -417,10 +450,15 @@ void sendStateHass() {
 
     root["color_temp"] = hassColorTemp;
     root["state"] = (hassOn) ? "ON" : "OFF";
+    root["effect"] = langList[(lang.dialect << 1) + lang.fullSentence];
 
-    char buffer[200];
+    char buffer[300];
     root.printTo(buffer, sizeof(buffer));
-    clientHass.publish(HASS_TOPIC_STATE, buffer, true);
+
+    String topic = HASS_TOPIC_PREFIX;
+    topic += particleDeviceName;
+    topic += HASS_TOPIC_STATE_SUFFIX;
+    clientHass.publish(topic, buffer, true);
 }
 
 
@@ -458,7 +496,7 @@ CRGB colorTemperatureToRGB(double kelvin) {
 // Callback signature for MQTT subscriptions
 void callbackHass(char* topic, byte* payload, unsigned int length) {
     /*Parse the command payload.*/
-    StaticJsonBuffer<200> jsonBuffer;
+    StaticJsonBuffer<300> jsonBuffer;
     JsonObject& root = jsonBuffer.parseObject((char*)payload);
     if (root.containsKey("state")) {
         hassOn = (strcmp(root["state"], "ON") == 0);
@@ -472,6 +510,14 @@ void callbackHass(char* topic, byte* payload, unsigned int length) {
     } else if (root.containsKey("color_temp")) {
         hassColorTemp = root["color_temp"];
         hassRGB = colorTemperatureToRGB(3000000.0 / hassColorTemp - 2600);
+    }
+    if (root.containsKey("effect")) {
+        for (unsigned i = 0; i < sizeof(langList) / sizeof(langList[0]); ++i) {
+            if (strcmp(root["effect"], langList[i]) == 0) {
+                lang.dialect = i >> 1;
+                lang.fullSentence = (i & 1) == 1;
+            }
+        }
     }
     lastTimestamp = UINT16_MAX;
     sendStateHass();
@@ -497,22 +543,28 @@ bool connectOnDemand() {
 }
 
 bool connectHassOnDemand() {
-    if (clientHass.isConnected())
-        return true;
-
-    systemLock.lock();
-    clientHass.connect(
-        HASS_DEVICE_ID,
-        HASS_ACCESS_USER,
-        HASS_ACCESS_PASS);
+    if (particleDeviceName.length()) {
+        if (clientHass.isConnected())
+            return true;
     
-    bool bConn = clientHass.isConnected();
-    if (bConn) {
-        debug("Connected to HASS");
-        clientHass.subscribe(HASS_TOPIC_SET);
+        systemLock.lock();
+        clientHass.connect(
+            particleDeviceName.c_str(),
+            HASS_ACCESS_USER,
+            HASS_ACCESS_PASS);
+        
+        bool bConn = clientHass.isConnected();
+        if (bConn) {
+            debug("Connected to HASS");
+            String topic = HASS_TOPIC_PREFIX;
+            topic += particleDeviceName;
+            topic += HASS_TOPIC_SET_SUFFIX;
+            clientHass.subscribe(topic);
+        }
+        systemLock.unlock();
+        return bConn;
     }
-    systemLock.unlock();
-    return bConn;
+    return false;
 }
 
 void loopLosant() {
@@ -532,7 +584,7 @@ void loopLosant() {
     root["data"] = state;
 
     // Get JSON string
-    char buffer[200];
+    char buffer[300];
     root.printTo(buffer, sizeof(buffer));
 
     // Loop the MQTT client
@@ -550,6 +602,10 @@ void loopHASS() {
     systemLock.lock();
     clientHass.loop();
     systemLock.unlock();
+    
+    EVERY_N_MILLISECONDS(30000) {
+        sendDiscoveryToken();
+    }
 }
 
 
@@ -585,7 +641,19 @@ os_thread_return_t measureLoop(void* param) {
     }
 }
 
+// Open a serial terminal and see the device name printed out
+void handlerDeviceName(const char *topic, const char *data) {
+    debug(String("Received device topic ") + topic + "="+data);
+    if (strcmp(topic, "particle/device/name") == 0) {
+        particleDeviceName = data;
+        debug(String("Received device name ") + data);
+    }
+}
+
 void setup() {
+    Particle.subscribe("particle/device/name", handlerDeviceName);
+    Particle.publish("particle/device/name");
+
     theme.setColor(LED_SIGNAL_CLOUD_CONNECTED, 0x00000000); // Set LED_SIGNAL_NETWORK_ON to no color
     theme.apply(); // Apply theme settings
     Wire.setSpeed(400000);
@@ -772,6 +840,7 @@ void setup() {
     debug(String("Listening for tpm2.net on ") + String(myIP) + " port %d", TPM2NET_LISTENING_PORT);
     
     measureWorker = new Thread(NULL,  measureLoop);
+    debug("Initialized");
 }
 
 
