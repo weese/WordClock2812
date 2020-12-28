@@ -560,6 +560,7 @@ bool connectHassOnDemand() {
             topic += particleDeviceName;
             topic += HASS_TOPIC_SET_SUFFIX;
             clientHass.subscribe(topic);
+            sendDiscoveryToken();
         }
         systemLock.unlock();
         return bConn;
@@ -602,8 +603,7 @@ void loopHASS() {
     systemLock.lock();
     clientHass.loop();
     systemLock.unlock();
-    
-    EVERY_N_MILLISECONDS(30000) {
+    EVERY_N_HOURS(24) {
         sendDiscoveryToken();
     }
 }
