@@ -1,5 +1,26 @@
+#include "config.h"
+
 // This #include statement was automatically added by the Particle IDE.
-#include "tpm2net.h"
+#include <FastLED.h>
+
+// This #include statement was automatically added by the Particle IDE.
+#include <HttpClient.h>
+
+// This #include statement was automatically added by the Particle IDE.
+#include <widgets/fastled_matrix_wc.h>
+#include <widgets/widget.h>
+#include <widgets/clock.h>
+#include <widgets/date.h>
+#include <widgets/weather.h>
+#include <widgets/message.h>
+#include <widgets/lastfm.h>
+#include <widgets/icon.h>
+#include <widgets/miflora.h>
+#include <widgets/settings_general.h>
+#include <widgets/tpm2.h>
+
+// Fonts
+#include <fonts/fonts.h>
 
 // This #include statement was automatically added by the Particle IDE.
 #include <SparkJson.h>
@@ -18,53 +39,209 @@
 
 #include <BlueDot_BME280_TSL2591.h>
 
-// This #include statement was automatically added by the Particle IDE.
-#include <FastLED.h>
-
 FASTLED_USING_NAMESPACE
-
-
-#define LOSANT_BROKER "broker.losant.com"
-#define LOSANT_DEVICE_ID "5d6c4a0a6cdb3e0006f11f60"
-#define LOSANT_ACCESS_KEY "f21356a8-9a49-4a5f-89f5-a7467bb6857b"
-#define LOSANT_ACCESS_SECRET "4b72d91cb8e7c855b15106683173a61ef94db9be6c0d25c9bf2206c4d00bc4be"
-
-// Topic used to subscribe to Losant commands.
-#define MQTT_TOPIC_COMMAND "losant/" LOSANT_DEVICE_ID "/command"
-// Topic used to publish state to Losant.
-#define MQTT_TOPIC_STATE "losant/" LOSANT_DEVICE_ID "/state"
-
-#define HASS_BROKER "192.168.100.1"
-#define HASS_ACCESS_USER "mqtt_user"
-#define HASS_ACCESS_PASS "mqtt_pass"
-
-//#define HASS_TOPIC_PREFIX "light/"
-#define HASS_TOPIC_PREFIX "homeassistant/light/"
-#define HASS_TOPIC_STATE_SUFFIX "/status"
-#define HASS_TOPIC_SET_SUFFIX "/set"
-#define HASS_TOPIC_CONFIG_SUFFIX "/config"
 
 String particleDeviceName;
 
-// IMPORTANT: Set pixel COUNT, PIN and TYPE
-#define NUM_LEDS 114
-#define PIXEL_PIN D6
-#define PIXEL_TYPE NEOPIXEL
+#include <utils.h>
 
-#define FADE_STEP 3
-#define MIN_BRIGHTNESS 10
+#define CONNECTION_TIMEOUT 300
+#define LISTENING_TIMEOUT 60
+
+typedef enum {
+    OFFLINE = 0,
+    LISTENING = 1,
+    CONNECTING = 2,
+    READY = 3,
+    CONNECTED = 4
+} ConnectionState;
+
+ConnectionState state = OFFLINE;
+system_tick_t lastStateChange = 0;
+
+const char * const iconOffline = "4503";
+const char * const iconListening = "17283";
+const char * const iconConnecting = "4503";
+const char * const iconConnected = "17947";
+
+const char * const textOffline = "";
+const char * const textListening = "";
+const char * const textConnecting = "";
+const char * const textConnected = "";
+
+void startup() {
+    System.enableFeature(FEATURE_RETAINED_MEMORY);
+    Serial.begin(115200);
+}
+
+SYSTEM_MODE(SEMI_AUTOMATIC);
+SYSTEM_THREAD(ENABLED);
+
+retained ClockWidget clockWidget(ClockWidgetConfig(false, false, false, true));
+retained DateWidget dateWidget(clockWidget, DateWidgetConfig(false, true));
+
+retained WeatherWidget weatherWidget(WeatherWidgetConfig{WEATHER_APP_ID, LATITUDE, LONGITUDE});
+retained MessageWidget messageWidget;
+// LastFMWidget lastFMWidget(LastFMConfig{LASTFM_USER, LASTFM_API_KEY});
+retained TPM2Widget tpm2Widget(gfx);
+
+SettingsGeneralConfig SettingsGeneral::config = {
+    font: 3,
+    dim: true,
+    colorText: { r: 255, g: 255, b: 255 },
+    brightnessMin: MIN_BRIGHTNESS,
+    brightnessMax: MAX_BRIGHTNESS,
+    luminanceMin: MIN_LUMINANCE,
+    luminanceMax: MAX_LUMINANCE,
+    gamma: GAMMA,
+};
+retained SettingsGeneral settingsGeneral;
+
+Widget* const widgets[] = {
+    &clockWidget,
+    &dateWidget,
+    // &weatherWidget,
+    // &lastFMWidget,
+    &messageWidget,
+    &tpm2Widget,
+    &settingsGeneral
+};
+
+int8_t activeWidget = -1;
+int8_t nextWidget, nextLoopWidget = 0;
+const int loopWidgets = 2;
+
+// Open a serial terminal and see the device name printed out
+void handlerNotification(const char *event, const char *data) {
+    messageWidget.processNotificationJSON(data);
+}
+
+int handlerNotificationFunction(String data) {
+    messageWidget.processNotificationJSON(data.c_str());
+    return 0;
+}
+
+void getWidgetList(String &list) {
+    // 1. Get total lenght of list
+    size_t bufSize = 1;
+    for (size_t i = 0; i < sizeof(widgets) / sizeof(Widget*); ++i) {
+        const char *def = widgets[i]->configDef(false);
+        size_t len = strlen(def);
+        if (len > 0)
+            bufSize += 1 + len;
+    }
+
+    // 2. Reserve space and fill list
+    list.reserve(bufSize);
+    list += '[';
+    for (size_t i = 0; i < sizeof(widgets) / sizeof(Widget*); ++i) {
+        const char *def = widgets[i]->configDef(false);
+        size_t len = strlen(def);
+        if (len > 0) {
+            if (list.length() > 1)
+                list += ",";
+            list += def;
+        }
+    }
+    list += ']';
+}
+
+void handlerWidgetList(const char *event, const char *) {
+    String list;
+    getWidgetList(list);
+    Particle.publish(PREFIX_WIDGET_LIST_RESPONSE, list, PRIVATE);
+}
+
+String funcWidgetList() {
+    String list;
+    getWidgetList(list);
+    return list;
+}
+
+void handlerWidgetDef(const char *event, const char *) {
+    size_t prefixLen = strlen(PREFIX_WIDGET_DEF);
+    const char *widget = event + prefixLen;
+    for (size_t i = 0; i < sizeof(widgets) / sizeof(Widget*); ++i)
+        if (strcmp(widgets[i]->name(), widget) == 0) {
+            char responseEvent[48] = PREFIX_WIDGET_DEF_RESPONSE;
+            strcpy(responseEvent + strlen(PREFIX_WIDGET_DEF_RESPONSE), widget);
+            Particle.publish(responseEvent, widgets[i]->configDef(true), PRIVATE);
+            break;
+        }
+}
+
+void handlerWidgetGet(const char *event, const char *) {
+    size_t prefixLen = strlen(PREFIX_WIDGET_GET);
+    const char *widget = event + prefixLen;
+    for (size_t i = 0; i < sizeof(widgets) / sizeof(Widget*); ++i)
+        if (strcmp(widgets[i]->name(), widget) == 0) {
+            char responseEvent[48] = PREFIX_WIDGET_GET_RESPONSE;
+            strcpy(responseEvent + strlen(PREFIX_WIDGET_GET_RESPONSE), widget);
+            Particle.publish(responseEvent, widgets[i]->configGet(), PRIVATE);
+            break;
+        }
+}
+
+void handlerWidgetSet(const char *event, const char *data) {
+    size_t prefixLen = strlen(PREFIX_WIDGET_SET);
+    const char *widget = event + prefixLen;
+    for (size_t i = 0; i < sizeof(widgets) / sizeof(Widget*); ++i)
+        if (strcmp(widgets[i]->name(), widget) == 0) {
+            char responseEvent[48] = PREFIX_WIDGET_GET_RESPONSE;
+            strcpy(responseEvent + strlen(PREFIX_WIDGET_GET_RESPONSE), widget);
+            widgets[i]->configSet(data);
+            Particle.publish(responseEvent, widgets[i]->configGet(), PRIVATE);
+            break;
+        }
+}
+
+void handlerWidgetHookReponse(const char *event, const char *data) {
+    size_t prefixLen = strlen(PREFIX_WIDGET_HOOK_RESPONSE);
+    const char *widget = event + prefixLen;
+    for (size_t i = 0; i < sizeof(widgets) / sizeof(Widget*); ++i) {
+        size_t nameLen = strlen(widgets[i]->name());
+        if (strncmp(widgets[i]->name(), widget, nameLen) == 0) {
+            const char *hookName = widget + nameLen;
+            if (*hookName)
+                ++hookName;
+            widgets[i]->hookHandler(hookName, data);
+            break;
+        }
+    }
+}
+
+void handlerWidget(const char *event, const char *data) {
+    // remove device specific prefix
+    size_t prefixLen = System.deviceID().length() + 1;
+    if (strlen(event) < prefixLen)
+        return;
+    event += prefixLen;
+
+    if (strncmp(event, PREFIX_WIDGET_DEF, strlen(PREFIX_WIDGET_DEF)) == 0)
+        handlerWidgetDef(event, data);
+    else if (strncmp(event, PREFIX_WIDGET_SET, strlen(PREFIX_WIDGET_SET)) == 0)
+        handlerWidgetSet(event, data);
+    else if (strcmp(event, PREFIX_WIDGET_LIST) == 0)
+        handlerWidgetList(event, data);
+    else if (strncmp(event, PREFIX_WIDGET_GET, strlen(PREFIX_WIDGET_GET)) == 0)
+        handlerWidgetGet(event, data);
+    else if (strncmp(event, PREFIX_WIDGET_HOOK_RESPONSE, strlen(PREFIX_WIDGET_HOOK_RESPONSE)) == 0)
+        handlerWidgetHookReponse(event, data);
+#if HAL_PLATFORM_BLE
+    else if (strcmp(event, PREFIX_WIDGET_BTSCAN) == 0) {
+        handlerBluetoothScan(event, data);
+    }
+#endif
+}
+
+
+
 
 #define LANG_OSSI       0
 #define LANG_WESSI      1
 #define LANG_RHEIN_RUHR 2
 
 char* langList[6] = {"Ost kurz", "Ost", "West kurz", "West", "Rhein-Ruhr kurz", "Rhein-Ruhr"};
-
-/* I'm in the midwest, so this is what I use for my home */
-#define LATITUDE        52.52437
-#define LONGITUDE       13.41053
-#define TIMEZONE        1
-
 
 //   0123 4567 89a
 // 0 ESKI STLF ÜNF
@@ -120,13 +297,6 @@ const uint16_t HOUR_WORDS[12] = {
     WORD_ELF
 };
 
-CRGB leds[NUM_LEDS];
-CRGB src[NUM_LEDS];
-CRGB dst[NUM_LEDS];
-fract8 fadeFract = 255;
-fract8 brightness = 255;
-fract8 targetBrightness = 255;
-
 struct {
     uint8_t dialect:2;
     uint8_t fullSentence:1;
@@ -135,19 +305,8 @@ struct {
 UDP UDPClient;
 SparkTime rtc;
 SunSet sun;
-LEDSystemTheme theme; // Enable custom theme
 BlueDot_BME280_TSL2591 bme280;
 BlueDot_BME280_TSL2591 tsl2591;
-
-uint16_t lastTimestamp = UINT16_MAX;
-
-// Home Assistent state
-CRGB hassRGB = CRGB::White;
-uint16_t hassColorTemp = 325; // pure white
-fract8 hassBrightness = 0;
-bool hassOn = false;
-
-CRGB palette[10];
 
 double illuminance = 0;
 double temperature = 0;
@@ -156,18 +315,6 @@ double humidity = 0;
 
 Thread* measureWorker;
 Mutex systemLock = Mutex();
-
-// reset the system after 10 seconds if the application is unresponsive
-ApplicationWatchdog wd(10000, System.reset);
-
-
-// Log message to cloud, message is a printf-formatted string
-void debug(String message, int value = 0) {
-    char msg [50];
-    sprintf(msg, message.c_str(), value);
-    Particle.publish("DEBUG", msg);
-}
-
 
 // namespace NSFastLED {
 
@@ -180,131 +327,6 @@ void debug(String message, int value = 0) {
 
 // }
 
-void showWord(uint16_t word) {
-    uint8_t row = word >> 8;
-    uint8_t col = (word >> 4) & 0xf;
-    uint8_t len = word & 0xf;
-    if (row & 1) {
-        col = 11 - col - len;
-    }
-    
-    uint8_t first = 4 + row * 11 + col;
-    uint8_t last = first + len;
-    for (uint8_t dot = first; dot != last; ++dot) {
-        leds[dot] = palette[row];
-    }
-}
-
-void showHour(uint8_t hour, bool hasUhr) {
-    if (hasUhr && hour == 1) {
-        showWord(WORD_EIN);
-    } else {
-        showWord(HOUR_WORDS[hour]);
-    }
-}
-
-void renderTime(uint8_t hour, uint8_t minute) {
-    // set minute points
-    for (uint8_t dot = 0; dot != minute % 5; ++dot) {
-        leds[dot] = palette[0];
-    }
-    
-    if (lang.fullSentence) {
-        showWord(WORD_ES);
-        showWord(WORD_IST);
-    }
-    
-    bool hasUhr = false;
-    switch (minute / 5) {
-        case 0:
-            hasUhr = true;
-            showWord(WORD_UHR);
-            break;
-        case 1:
-            showWord(WORD_FUNF);
-            showWord(WORD_NACH);
-            break;
-        case 2:
-            showWord(WORD_ZEHN);
-            showWord(WORD_NACH);
-            break;
-        case 3:
-            showWord(WORD_VIERTEL);
-            if (lang.dialect == LANG_OSSI) {
-                ++hour;
-            } else {
-                showWord(WORD_NACH);
-            }
-            break;
-        case 4:
-            if (lang.dialect == LANG_RHEIN_RUHR) {
-                showWord(WORD_ZWANZIG);
-                showWord(WORD_NACH);
-            } else {
-                showWord(WORD_ZEHN);
-                showWord(WORD_VOR);
-                showWord(WORD_HALB);
-                ++hour;
-            }
-            break;
-        case 5:
-            showWord(WORD_FUNF);
-            showWord(WORD_VOR);
-            showWord(WORD_HALB);
-            ++hour;
-            break;
-        case 6:
-            showWord(WORD_HALB);
-            ++hour;
-            break;
-        case 7:
-            showWord(WORD_FUNF);
-            showWord(WORD_NACH);
-            showWord(WORD_HALB);
-            ++hour;
-            break;
-        case 8:
-            if (lang.dialect == LANG_RHEIN_RUHR) {
-                showWord(WORD_ZWANZIG);
-                showWord(WORD_VOR);
-            } else {
-                showWord(WORD_ZEHN);
-                showWord(WORD_NACH);
-                showWord(WORD_HALB);
-            }
-            ++hour;
-            break;
-        case 9:
-            if (lang.dialect == LANG_OSSI) {
-                showWord(WORD_DREI);
-                showWord(WORD_VIERTEL);
-            } else {
-                showWord(WORD_VIERTEL);
-                showWord(WORD_VOR);
-            }
-            ++hour;
-            break;
-        case 10:
-            showWord(WORD_ZEHN);
-            showWord(WORD_VOR);
-            ++hour;
-            break;
-        case 11:
-            showWord(WORD_FUNF);
-            showWord(WORD_VOR);
-            ++hour;
-            break;
-    }
-    
-    showHour(hour % 12, hasUhr);
-}
-
-void renderTime(uint8_t hour, uint8_t minute, struct CRGB color) {
-    for (uint8_t row = 0; row < 10; ++row) {        
-        palette[row] = color;
-    }
-    renderTime(hour, minute);
-}
 
 struct CRGB computeColorOfTheDay(unsigned long currentTime) {
 	sun.setCurrentDate(rtc.year(currentTime), rtc.month(currentTime), rtc.day(currentTime));
@@ -332,68 +354,36 @@ struct CRGB computeColorOfTheDay(unsigned long currentTime) {
     }
 }
 
-void showTimeLoop() {
-    unsigned long currentTime = rtc.now();//*30;
-    uint8_t minute = rtc.minute(currentTime);
-    uint8_t hour = rtc.hour(currentTime);
-    
-    uint16_t timestamp = (hour << 8) | minute;
-    if (lastTimestamp != timestamp) {
-        lastTimestamp = timestamp;
+// void fadeLoop() {
+//     bool updateRequired = (fadeFract != 255);
 
-        // take a snapshot of the current state as source for fading
-        nblend(src, dst, NUM_LEDS, fadeFract);
-        fadeFract = 0;
-        FastLED.clear();
+//     if (255 - fadeFract < FADE_STEP) {
+//         fadeFract = 255;
+//     } else {
+//         fadeFract += FADE_STEP;
+//     }
 
-        if (hassOn) {
-            renderTime(hour, minute, hassRGB);
-        } else {
-            renderTime(hour, minute, computeColorOfTheDay(currentTime));
-        }
+//     if (brightness != targetBrightness) {
+//         updateRequired = true;
+//         if (brightness < targetBrightness) {
+//             if (targetBrightness - brightness < FADE_STEP) {
+//                 brightness = targetBrightness;
+//             } else {
+//                 brightness += FADE_STEP;
+//             }
+//         } else {
+//             if (brightness - targetBrightness < FADE_STEP) {
+//                 brightness = targetBrightness;
+//             } else {
+//                 brightness -= FADE_STEP;
+//             }
+//         }
+//     }
 
-        // The set state will the fading destination
-        memcpy(dst, leds, NUM_LEDS * sizeof(CRGB));
-    }
-}
-
-void updateLeds() {
-    blend(src, dst, leds, NUM_LEDS, fadeFract);
-    napplyGamma_video(leds, NUM_LEDS, 2.5);
-    nscale8(leds, NUM_LEDS, hassBrightness > 1 ? hassBrightness : brightness);
-    FastLED.show();
-}
-
-void fadeLoop() {
-    bool updateRequired = (fadeFract != 255);
-
-    if (255 - fadeFract < FADE_STEP) {
-        fadeFract = 255;
-    } else {
-        fadeFract += FADE_STEP;
-    }
-
-    if (brightness != targetBrightness) {
-        updateRequired = true;
-        if (brightness < targetBrightness) {
-            if (targetBrightness - brightness < FADE_STEP) {
-                brightness = targetBrightness;
-            } else {
-                brightness += FADE_STEP;
-            }
-        } else {
-            if (brightness - targetBrightness < FADE_STEP) {
-                brightness = targetBrightness;
-            } else {
-                brightness -= FADE_STEP;
-            }
-        }
-    }
-
-    if (updateRequired) {
-        updateLeds();
-    }
-}
+//     if (updateRequired) {
+//         updateLeds();
+//     }
+// }
 
 uint8_t getBrightness() {
     illuminance = tsl2591.readIlluminance_TSL2591();
@@ -411,116 +401,11 @@ void callbackHass(char* topic, byte* payload, unsigned int length);
 
 // MQTT clients (connecting to Losant and Home Assistant brokers)
 MQTT client(LOSANT_BROKER, 1883, NULL);
-MQTT clientHass(HASS_BROKER, 1883, callbackHass, 500);
-
-void sendDiscoveryToken() {
-    StaticJsonBuffer<500> jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
-    String topic = HASS_TOPIC_PREFIX;
-    topic += particleDeviceName;
-    char buffer[400] = "";
-    root["~"] = topic.c_str();
-    root["name"] = "WordClock";
-    root["unique_id"] = particleDeviceName.c_str();
-    root["cmd_t"] = "~" HASS_TOPIC_SET_SUFFIX;
-    root["stat_t"] = "~" HASS_TOPIC_STATE_SUFFIX;
-    root["schema"] = "json";
-    root["rgb"] = true;
-    root["brightness"] = false;
-    // root["transition"]=2;
-    root["effect"] = true;
-    JsonArray& list = root.createNestedArray("effect_list");
-    for (unsigned i = 0; i < sizeof(langList) / sizeof(langList[0]); ++i) {
-        list.add(langList[i]);
-    }
-    root.printTo(buffer, sizeof(buffer));
-
-    topic += HASS_TOPIC_CONFIG_SUFFIX;
-    clientHass.publish(topic, buffer, true);
-}
-
-void sendStateHass() {
-    StaticJsonBuffer<300> jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
-    JsonObject& color = root.createNestedObject("color");
-
-    color["r"] = hassRGB.r;
-    color["g"] = hassRGB.g;
-    color["b"] = hassRGB.b;
-
-    root["color_temp"] = hassColorTemp;
-    root["state"] = (hassOn) ? "ON" : "OFF";
-    root["effect"] = langList[(lang.dialect << 1) + lang.fullSentence];
-
-    char buffer[300];
-    root.printTo(buffer, sizeof(buffer));
-
-    String topic = HASS_TOPIC_PREFIX;
-    topic += particleDeviceName;
-    topic += HASS_TOPIC_STATE_SUFFIX;
-    clientHass.publish(topic, buffer, true);
-}
-
 
 uint8_t clamp(double x) {
     if (x < 0) { return 0; }
     if (x > 255) { return 255; }
     return x;
-}
-
-// From http://www.tannerhelland.com/4435/convert-temperature-rgb-algorithm-code/
-
-    // Start with a temperature, in Kelvin, somewhere between 1000 and 40000.  (Other values may work,
-    //  but I can't make any promises about the quality of the algorithm's estimates above 40000 K.)
-    
-CRGB colorTemperatureToRGB(double kelvin) {
-    double temp = kelvin / 100.0;
-    uint8_t red, green, blue;
-    if (temp <= 66) { 
-        red = 255; 
-        green = clamp(99.4708025861 * log(temp) - 161.1195681661);
-        if (temp <= 19) {
-            blue = 0;
-        } else {
-            blue = clamp(138.5177312231 * log(temp - 10) - 305.0447927307);
-        }
-    } else {
-        red = clamp(329.698727446 * pow(temp - 60, -0.1332047592));
-        green = clamp(288.1221695283 * pow(temp - 60, -0.0755148492));
-        blue = 255;
-    }
-    return CRGB(red, green, blue);
-}
-
-
-// Callback signature for MQTT subscriptions
-void callbackHass(char* topic, byte* payload, unsigned int length) {
-    /*Parse the command payload.*/
-    StaticJsonBuffer<300> jsonBuffer;
-    JsonObject& root = jsonBuffer.parseObject((char*)payload);
-    if (root.containsKey("state")) {
-        hassOn = (strcmp(root["state"], "ON") == 0);
-    }
-    if (root.containsKey("brightness")) {
-        hassBrightness = root["brightness"];
-    }
-    if (root.containsKey("color")) {
-        JsonObject& rgb = root["color"];
-        hassRGB.setRGB(rgb["r"], rgb["g"], rgb["b"]);
-    } else if (root.containsKey("color_temp")) {
-        hassColorTemp = root["color_temp"];
-        hassRGB = colorTemperatureToRGB(3000000.0 / hassColorTemp - 2600);
-    }
-    if (root.containsKey("effect")) {
-        for (unsigned i = 0; i < sizeof(langList) / sizeof(langList[0]); ++i) {
-            if (strcmp(root["effect"], langList[i]) == 0) {
-                lang.dialect = i >> 1;
-                lang.fullSentence = (i & 1) == 1;
-            }
-        }
-    }
-    lastTimestamp = UINT16_MAX;
-    sendStateHass();
 }
 
 bool connectOnDemand() {
@@ -540,32 +425,6 @@ bool connectOnDemand() {
     }
     systemLock.unlock();
     return bConn;
-}
-
-bool connectHassOnDemand() {
-    if (particleDeviceName.length()) {
-        if (clientHass.isConnected())
-            return true;
-    
-        systemLock.lock();
-        clientHass.connect(
-            particleDeviceName.c_str(),
-            HASS_ACCESS_USER,
-            HASS_ACCESS_PASS);
-        
-        bool bConn = clientHass.isConnected();
-        if (bConn) {
-            debug("Connected to HASS");
-            String topic = HASS_TOPIC_PREFIX;
-            topic += particleDeviceName;
-            topic += HASS_TOPIC_SET_SUFFIX;
-            clientHass.subscribe(topic);
-            sendDiscoveryToken();
-        }
-        systemLock.unlock();
-        return bConn;
-    }
-    return false;
 }
 
 void loopLosant() {
@@ -595,21 +454,6 @@ void loopLosant() {
     systemLock.unlock();
 }
 
-void loopHASS() {
-    if (!connectHassOnDemand()) {
-        return;
-    }
-    // Loop the MQTT client
-    systemLock.lock();
-    clientHass.loop();
-    systemLock.unlock();
-    EVERY_N_HOURS(24) {
-        sendDiscoveryToken();
-    }
-}
-
-
-uint8_t sensorIdx = 0;
 
 os_thread_return_t measureLoop(void* param) {
     while (true) {
@@ -641,29 +485,40 @@ os_thread_return_t measureLoop(void* param) {
     }
 }
 
-// Open a serial terminal and see the device name printed out
-void handlerDeviceName(const char *topic, const char *data) {
-    debug(String("Received device topic ") + topic + "="+data);
-    if (strcmp(topic, "particle/device/name") == 0) {
-        particleDeviceName = data;
-        debug(String("Received device name ") + data);
-    }
-}
-
 void setup() {
+    startup();
+    LOG(INFO, "Started");
+    FastLED.addLeds<PIXEL_TYPE, PIXEL_PIN>(gfx.leds, gfx.size());//.setCorrection(TypicalSMD5050);
+    FastLED.clear();
+    FastLED.leds()[0] = CRGB(255,255,255);
+
+    gfx.setFont(getFont("m3x6").font);
+    delay(5000);
+
     Particle.subscribe("particle/device/name", handlerDeviceName);
     Particle.publish("particle/device/name");
+    Particle.subscribe("potty/notification", handlerNotification, MY_DEVICES);
+    Particle.function("notify", handlerNotificationFunction);
+
+    Particle.subscribe(System.deviceID() + "/" PREFIX_WIDGET, handlerWidget, MY_DEVICES);
+    Particle.variable("widgetList", &funcWidgetList);
 
     theme.setColor(LED_SIGNAL_CLOUD_CONNECTED, 0x00000000); // Set LED_SIGNAL_NETWORK_ON to no color
     theme.apply(); // Apply theme settings
     Wire.setSpeed(400000);
 
-    FastLED.addLeds<PIXEL_TYPE, PIXEL_PIN>(leds, NUM_LEDS);//.setCorrection(TypicalSMD5050);
-    // FastLED.setBrightness(127);
-    
-    FastLED.clear();
+
+    // for (uint8_t i=0;i<10;++i) {
+    //     gfx.drawFastVLine(i,i,2,0b0001000001000010 * (i+2));
+    //     // CRGB col[2];
+    //     // col[0] = CRGB(i*2, i*6, i*4);
+    //     // col[1] = CRGB(i*4, i*6, i*4);
+    //     // gfx.writeHPixels(i,i,col, 2);
+    // }
+    // gfx.mirror();
+    // gfx.flip();
     FastLED.show();
-    memcpy(dst, leds, NUM_LEDS * sizeof(CRGB));
+
     rtc.begin(&UDPClient, "0.de.pool.ntp.org");
     rtc.setTimeZone(TIMEZONE);
     rtc.setUseEuroDSTRule(true);
@@ -835,37 +690,133 @@ void setup() {
         brightness = targetBrightness = getBrightness();
     }
     
-    setupTpm2Net((uint8_t*)&dst[4], NUM_LEDS - 4);
     IPAddress myIP = WiFi.localIP();
     debug(String("Listening for tpm2.net on ") + String(myIP) + " port %d", TPM2NET_LISTENING_PORT);
     
     measureWorker = new Thread(NULL,  measureLoop);
     debug("Initialized");
+
+    Particle.connect();
 }
 
+void onConnect() {
+    LOG(INFO, "Connected");
+    // Print your device IP Address via serial
+    Serial.printf("Application>\tWifi IP: %s\n", WiFi.localIP().toString().c_str());
 
-uint32_t timeLastPacketReceived = UINT32_MAX;
+    theme.setColor(LED_SIGNAL_CLOUD_CONNECTED, 0x00000000); // Set LED_SIGNAL_NETWORK_ON to no color
+    theme.apply(); // Apply theme settings
+
+    // connectHassOnDemand();
+    // setupSSDP();
+    for (unsigned i = 0; i < (sizeof(widgets) / sizeof(Widget*)); ++i) {
+        LOG(INFO, "onConnect(%i)", i);
+        widgets[i]->onConnect();
+    }
+}
 
 void loop() {
-    bool newFrame = loopTpm2Net();
-    if (newFrame) {
-        fadeFract = 255;
-        memset(dst, 0, 4 * sizeof(CRGB));
-        updateLeds();
-        timeLastPacketReceived = millis();
-    } else {
-        if (millis() - TPM2NET_PACKET_TIMEOUT > timeLastPacketReceived) {
-            timeLastPacketReceived = UINT32_MAX;
-            lastTimestamp = UINT16_MAX;
-        }
+    ConnectionState newState = OFFLINE;
+    if (WiFi.listening()) {
+        newState = LISTENING;
+    } else if (WiFi.connecting()) {
+        newState = CONNECTING;
+    } else if (Particle.connected()) {
+        newState = CONNECTED;
+    } else if (WiFi.ready()) {
+        newState = READY;
     }
-    
-    if (timeLastPacketReceived == UINT32_MAX) {
-        EVERY_N_MILLISECONDS(20) {
-            loopHASS();
-            showTimeLoop();
+
+    if (state != newState) {
+        state = newState;
+        lastStateChange = millis();
+        switch (state) {
+            case OFFLINE:
+                iconText.set(iconOffline, textOffline);
+                break;
+            case LISTENING:
+                iconText.set(iconListening, textListening);
+                break;
+            case CONNECTING:
+                iconText.set(iconConnecting, textConnecting);
+                break;
+            case READY:
+                iconText.set(iconConnected, textConnected);
+                break;
+            case CONNECTED:
+                onConnect();
+                break;
+        }
+        iconText.align(gfx);
+    }
+
+    switch (state) {
+        case OFFLINE:
+            if (millis() - lastStateChange > CONNECTION_TIMEOUT * 1000) {
+                lastStateChange = millis();
+                WiFi.connect();
+            }
+            break;
+        case CONNECTING:
+            if (millis() - lastStateChange > CONNECTION_TIMEOUT * 1000)
+                WiFi.listen();
+            break;
+        case LISTENING:
+            if (millis() - lastStateChange > LISTENING_TIMEOUT * 1000)
+                WiFi.listen(false);
+            break;
+    }
+
+    EVERY_N_MILLISECONDS(15) {
+        // loopHASS();
+        // loopSSDP();
+        if (renderLoop(activeWidget >= 0 ? widgets[activeWidget] : NULL))
             fadeLoop();
+    }
+
+    EVERY_N_MILLISECONDS(20) {
+        if (brightness > 0) {
+            if (Particle.connected()) {
+
+                // Is there a widget that wants to be shown?
+                UrgencyLevel highestUrgency = normal;
+                for (unsigned i = 0; i < (sizeof(widgets) / sizeof(Widget*)); ++i) {
+                    UrgencyLevel ul = widgets[i]->urgency();
+                    if (highestUrgency < ul) { 
+                        highestUrgency = ul;
+                        nextWidget = i;
+                    }
+                }
+
+                // If not, cycle through regular widgets if necessary
+                if (activeWidget == nextWidget) {
+                    if (highestUrgency == normal && iconText.needTransition()) {
+                        do {
+                            nextWidget = nextLoopWidget;
+                            nextLoopWidget = (nextLoopWidget + 1) % loopWidgets;
+                        } while (widgets[nextWidget]->urgency() == silent);
+                    } else if (highestUrgency == high) {
+                        iconText.resetTimer();
+                    }
+                }
+
+                if ((highestUrgency == highWithTransition || activeWidget != nextWidget) && iconText.readyForTransition()) {
+                    if (activeWidget >= 0)
+                        widgets[activeWidget]->afterShow();
+                    activeWidget = nextWidget;
+                    iconText.startTransition(scrollDown);
+                    widgets[activeWidget]->beforeShow();
+                }
+                if (activeWidget >= 0)
+                    widgets[activeWidget]->loop(iconText);
+            } else {
+                EVERY_N_MILLISECONDS(10000) {
+                    Particle.connect();
+                }
+                activeWidget = -1;
+            }
         }
     }
+
     os_thread_yield();
 }
