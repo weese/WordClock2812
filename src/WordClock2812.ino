@@ -9,7 +9,7 @@
 // This #include statement was automatically added by the Particle IDE.
 #include <widgets/fastled_matrix_wc.h>
 #include <widgets/widget.h>
-#include <widgets/clock.h>
+#include <widgets/wordclock.h>
 #include <widgets/date.h>
 #include <widgets/weather.h>
 #include <widgets/message.h>
@@ -77,13 +77,13 @@ void startup() {
 SYSTEM_MODE(SEMI_AUTOMATIC);
 SYSTEM_THREAD(ENABLED);
 
-retained ClockWidget clockWidget(ClockWidgetConfig(false, false, false, true));
-retained DateWidget dateWidget(clockWidget, DateWidgetConfig(false, true));
+retained WordClockWidget wordClockWidget;
+retained DateWidget dateWidget(wordClockWidget.rtc, DateWidgetConfig(false, true));
 
 retained WeatherWidget weatherWidget(WeatherWidgetConfig{WEATHER_APP_ID, LATITUDE, LONGITUDE});
 retained MessageWidget messageWidget;
 // LastFMWidget lastFMWidget(LastFMConfig{LASTFM_USER, LASTFM_API_KEY});
-retained TPM2Widget tpm2Widget(gfx);
+retained TPM2Widget tpm2Widget;
 
 SettingsGeneralConfig SettingsGeneral::config = {
     font: 3,
@@ -98,7 +98,7 @@ SettingsGeneralConfig SettingsGeneral::config = {
 retained SettingsGeneral settingsGeneral;
 
 Widget* const widgets[] = {
-    &clockWidget,
+    &wordClockWidget,
     &dateWidget,
     // &weatherWidget,
     // &lastFMWidget,
@@ -234,74 +234,6 @@ void handlerWidget(const char *event, const char *data) {
 #endif
 }
 
-
-
-
-#define LANG_OSSI       0
-#define LANG_WESSI      1
-#define LANG_RHEIN_RUHR 2
-
-char* langList[6] = {"Ost kurz", "Ost", "West kurz", "West", "Rhein-Ruhr kurz", "Rhein-Ruhr"};
-
-//   0123 4567 89a
-// 0 ESKI STLF ÜNF
-// 1 ZEHN ZWAN ZIG
-// 2 DREI VIER TEL
-// 3 TGNA CHVO RJM
-// 4 HALB QZWÖ LFP
-// 5 ZWEI NSIE BEN
-// 6 KDRE IRHF ÜNF
-// 7 ELFN EUNV IER
-// 8 WACH TZEH NRS
-// 9 BSEC HSFM UHR
-
-
-// row, column, length    rcl
-#define WORD_ES         0x002
-#define WORD_IST        0x033
-#define WORD_FUNF       0x074
-#define WORD_ZEHN       0x104
-#define WORD_ZWANZIG    0x147
-#define WORD_DREI       0x204
-#define WORD_VIERTEL    0x247
-#define WORD_NACH       0x324
-#define WORD_VOR        0x363
-#define WORD_HALB       0x404
-#define WORD_ZWOLF      0x455
-#define WORD_ZWEI       0x504
-#define WORD_EIN        0x523
-#define WORD_EINS       0x524
-#define WORD_SIEBEN     0x556
-#define WORD_DREI2      0x614
-#define WORD_FUNF2      0x674
-#define WORD_ELF        0x703
-#define WORD_NEUN       0x734
-#define WORD_VIER       0x774
-#define WORD_ACHT       0x814
-#define WORD_ZEHN2      0x854
-#define WORD_SECHS      0x915
-#define WORD_UHR        0x983
-
-const uint16_t HOUR_WORDS[12] = {
-    WORD_ZWOLF,
-    WORD_EINS,
-    WORD_ZWEI,
-    WORD_DREI2,
-    WORD_VIER,
-    WORD_FUNF2,
-    WORD_SECHS,
-    WORD_SIEBEN,
-    WORD_ACHT,
-    WORD_NEUN,
-    WORD_ZEHN2,
-    WORD_ELF
-};
-
-struct {
-    uint8_t dialect:2;
-    uint8_t fullSentence:1;
-} lang = { LANG_OSSI, false };
-
 UDP UDPClient;
 SparkTime rtc;
 SunSet sun;
@@ -353,37 +285,6 @@ struct CRGB computeColorOfTheDay(unsigned long currentTime) {
         return Candle;
     }
 }
-
-// void fadeLoop() {
-//     bool updateRequired = (fadeFract != 255);
-
-//     if (255 - fadeFract < FADE_STEP) {
-//         fadeFract = 255;
-//     } else {
-//         fadeFract += FADE_STEP;
-//     }
-
-//     if (brightness != targetBrightness) {
-//         updateRequired = true;
-//         if (brightness < targetBrightness) {
-//             if (targetBrightness - brightness < FADE_STEP) {
-//                 brightness = targetBrightness;
-//             } else {
-//                 brightness += FADE_STEP;
-//             }
-//         } else {
-//             if (brightness - targetBrightness < FADE_STEP) {
-//                 brightness = targetBrightness;
-//             } else {
-//                 brightness -= FADE_STEP;
-//             }
-//         }
-//     }
-
-//     if (updateRequired) {
-//         updateLeds();
-//     }
-// }
 
 uint8_t getBrightness() {
     illuminance = tsl2591.readIlluminance_TSL2591();
@@ -490,7 +391,7 @@ void setup() {
     LOG(INFO, "Started");
     FastLED.addLeds<PIXEL_TYPE, PIXEL_PIN>(gfx.leds, gfx.size());//.setCorrection(TypicalSMD5050);
     FastLED.clear();
-    FastLED.leds()[0] = CRGB(255,255,255);
+    FastLED.show();
 
     gfx.setFont(getFont("m3x6").font);
     delay(5000);
@@ -518,11 +419,6 @@ void setup() {
     // gfx.mirror();
     // gfx.flip();
     FastLED.show();
-
-    rtc.begin(&UDPClient, "0.de.pool.ntp.org");
-    rtc.setTimeZone(TIMEZONE);
-    rtc.setUseEuroDSTRule(true);
-    sun.setPosition(LATITUDE, LONGITUDE, TIMEZONE);
     
     connectHassOnDemand();
     
@@ -691,7 +587,6 @@ void setup() {
     }
     
     IPAddress myIP = WiFi.localIP();
-    debug(String("Listening for tpm2.net on ") + String(myIP) + " port %d", TPM2NET_LISTENING_PORT);
     
     measureWorker = new Thread(NULL,  measureLoop);
     debug("Initialized");

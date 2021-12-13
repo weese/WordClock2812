@@ -93,12 +93,6 @@ void fadeLoop() {
     // bool updateRequired = (fadeFract != 255);
     bool updateRequired = true;
 
-    // if (255 - fadeFract < FADE_STEP) {
-    //     fadeFract = 255;
-    // } else {
-    //     fadeFract += FADE_STEP;
-    // }
-
     if (brightness != targetBrightness) {
         updateRequired = true;
         if (brightness < targetBrightness) {
