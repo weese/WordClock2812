@@ -80,7 +80,7 @@ SYSTEM_THREAD(ENABLED);
 retained WordClockWidget wordClockWidget;
 retained DateWidget dateWidget(wordClockWidget.rtc, DateWidgetConfig(false, true));
 
-retained WeatherWidget weatherWidget(WeatherWidgetConfig{WEATHER_APP_ID, LATITUDE, LONGITUDE});
+retained WeatherWidget weatherWidget(WeatherWidgetConfig{WEATHER_APP_ID, LATITUDE, LONGITUDE, true});
 retained MessageWidget messageWidget;
 // LastFMWidget lastFMWidget(LastFMConfig{LASTFM_USER, LASTFM_API_KEY});
 retained TPM2Widget tpm2Widget;
@@ -100,7 +100,7 @@ retained SettingsGeneral settingsGeneral;
 Widget* const widgets[] = {
     &wordClockWidget,
     &dateWidget,
-    // &weatherWidget,
+    &weatherWidget,
     // &lastFMWidget,
     &messageWidget,
     &tpm2Widget,
@@ -109,7 +109,7 @@ Widget* const widgets[] = {
 
 int8_t activeWidget = -1;
 int8_t nextWidget, nextLoopWidget = 0;
-const int loopWidgets = 2;
+const int loopWidgets = 3;
 
 // Open a serial terminal and see the device name printed out
 void handlerNotification(const char *event, const char *data) {
