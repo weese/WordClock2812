@@ -28,17 +28,6 @@
 // This #include statement was automatically added by the Particle IDE.
 #include <MQTT.h>
 
-// This #include statement was automatically added by the Particle IDE.
-#include <Wire.h>
-
-// This #include statement was automatically added by the Particle IDE.
-#include <SunSet.h>
-
-// This #include statement was automatically added by the Particle IDE.
-#include <SparkTime.h>
-
-#include <BlueDot_BME280_TSL2591.h>
-
 FASTLED_USING_NAMESPACE
 
 String particleDeviceName;
@@ -74,28 +63,35 @@ void startup() {
     Serial.begin(115200);
 }
 
+// STARTUP(startup());
 SYSTEM_MODE(SEMI_AUTOMATIC);
 SYSTEM_THREAD(ENABLED);
 
-retained WordClockWidget wordClockWidget;
-retained DateWidget dateWidget(wordClockWidget.rtc, DateWidgetConfig(false, true));
+retained WordClockWidget    wordClockWidget;
+retained DateWidget         dateWidget(DateWidgetConfig(false, true));
+retained WeatherWidget      weatherWidget(WeatherWidgetConfig{WEATHER_APP_ID, true});
+retained MessageWidget      messageWidget;
+// LastFMWidget                lastFMWidget(LastFMConfig{LASTFM_USER, LASTFM_API_KEY});
+// retained TPM2Widget         tpm2Widget;
 
-retained WeatherWidget weatherWidget(WeatherWidgetConfig{WEATHER_APP_ID, LATITUDE, LONGITUDE, true});
-retained MessageWidget messageWidget;
-// LastFMWidget lastFMWidget(LastFMConfig{LASTFM_USER, LASTFM_API_KEY});
-retained TPM2Widget tpm2Widget;
-
-SettingsGeneralConfig SettingsGeneral::config = {
+retained SettingsGeneral settingsGeneral(SettingsGeneralConfig{
     font: 3,
+    nightShift: true,
     dim: true,
-    colorText: { r: 255, g: 255, b: 255 },
+    useEuroDSTRule: true,
+    hoursOffset: TIMEZONE,
+    textColor: {
+        { r: 255, g: 255, b: 255 },
+        { r: 255, g: 255, b: 255 },
+    },
     brightnessMin: MIN_BRIGHTNESS,
     brightnessMax: MAX_BRIGHTNESS,
     luminanceMin: MIN_LUMINANCE,
     luminanceMax: MAX_LUMINANCE,
     gamma: GAMMA,
-};
-retained SettingsGeneral settingsGeneral;
+    latitude: LATITUDE,
+    longitude: LONGITUDE,
+});
 
 Widget* const widgets[] = {
     &wordClockWidget,
@@ -103,7 +99,7 @@ Widget* const widgets[] = {
     &weatherWidget,
     // &lastFMWidget,
     &messageWidget,
-    &tpm2Widget,
+    // &tpm2Widget,
     &settingsGeneral
 };
 
@@ -234,80 +230,17 @@ void handlerWidget(const char *event, const char *data) {
 #endif
 }
 
-UDP UDPClient;
-SparkTime rtc;
-SunSet sun;
-BlueDot_BME280_TSL2591 bme280;
-BlueDot_BME280_TSL2591 tsl2591;
-
 double illuminance = 0;
 double temperature = 0;
 double pressure = 0;
 double humidity = 0;
 
-Thread* measureWorker;
-Mutex systemLock = Mutex();
-
-// namespace NSFastLED {
-
-// uint16_t XY(uint8_t x, uint8_t y) {
-//     if (y & 1) {
-//         x = 10 - x;
-//     }
-//     return 4 + y * 11 + x;
-// }
-
-// }
-
-
-struct CRGB computeColorOfTheDay(unsigned long currentTime) {
-	sun.setCurrentDate(rtc.year(currentTime), rtc.month(currentTime), rtc.day(currentTime));
-	
-	/* Check to see if we need to update our timezone value */
-	if (rtc.isEuroDST(currentTime))
-		sun.setTZOffset(TIMEZONE + 1);
-	else
-		sun.setTZOffset(TIMEZONE);
-	
-    uint16_t sunrise = sun.calcSunrise();
-    uint16_t sunset = sun.calcSunset();
-    uint16_t minOfTheDay = rtc.hour(currentTime) * 60 + rtc.minute(currentTime);
-
-    if (minOfTheDay <= sunrise - 50) {
-        return Candle;
-    } else if (minOfTheDay <= sunrise) {
-        return blend(CRGB(DirectSunlight), CRGB(Candle), (sunrise - minOfTheDay) * 5);
-    } else if (minOfTheDay <= sunset - 30) {
-        return CRGB(DirectSunlight);
-    } else if (minOfTheDay <= sunset) {
-        return blend(CRGB(Candle), CRGB(DirectSunlight), (sunset - minOfTheDay) * 8);
-    } else {
-        return Candle;
-    }
-}
-
-uint8_t getBrightness() {
-    illuminance = tsl2591.readIlluminance_TSL2591();
-    double result = log(illuminance + 1) * 50 - 200;
-    if (result > 255) {
-        return 255;
-    } else if (result < MIN_BRIGHTNESS) {
-        return MIN_BRIGHTNESS;
-    } else {
-        return result;
-    }
-}
-
+// uint8_t getBrightness();
 void callbackHass(char* topic, byte* payload, unsigned int length);
 
 // MQTT clients (connecting to Losant and Home Assistant brokers)
 MQTT client(LOSANT_BROKER, 1883, NULL);
-
-uint8_t clamp(double x) {
-    if (x < 0) { return 0; }
-    if (x > 255) { return 255; }
-    return x;
-}
+Mutex systemLock = Mutex();
 
 bool connectOnDemand() {
     if (client.isConnected())
@@ -355,36 +288,7 @@ void loopLosant() {
     systemLock.unlock();
 }
 
-
-os_thread_return_t measureLoop(void* param) {
-    while (true) {
-        targetBrightness = getBrightness();
-        EVERY_N_MILLISECONDS(1000) {
-            // Don't read sensors while we are fading ... the blocking reads would cause glitches
-            switch (sensorIdx) {
-                case 0:
-                    temperature = bme280.readTempC();
-                    break;
-                case 1:
-                    pressure = bme280.readPressure();
-                    break;
-                case 2:
-                    humidity = bme280.readHumidity();
-                    loopLosant();
-            }
-            if (++sensorIdx == 3) {
-                sensorIdx = 0;
-            }
-            
-            // debug("target %d", targetBrightness);
-            // Particle.publish("temperature", String(temperature), 60, PRIVATE);
-            // Particle.publish("pressure", String(pressure), 60, PRIVATE);
-            // Particle.publish("humidity", String(humidity), 60, PRIVATE);
-            // Particle.publish("illuminance", String(illuminance), 60, PRIVATE);
-        }
-        os_thread_yield();
-    }
-}
+void setupSensors();
 
 void setup() {
     startup();
@@ -406,189 +310,16 @@ void setup() {
 
     theme.setColor(LED_SIGNAL_CLOUD_CONNECTED, 0x00000000); // Set LED_SIGNAL_NETWORK_ON to no color
     theme.apply(); // Apply theme settings
-    Wire.setSpeed(400000);
-
-
-    // for (uint8_t i=0;i<10;++i) {
-    //     gfx.drawFastVLine(i,i,2,0b0001000001000010 * (i+2));
-    //     // CRGB col[2];
-    //     // col[0] = CRGB(i*2, i*6, i*4);
-    //     // col[1] = CRGB(i*4, i*6, i*4);
-    //     // gfx.writeHPixels(i,i,col, 2);
-    // }
-    // gfx.mirror();
-    // gfx.flip();
-    FastLED.show();
     
     connectHassOnDemand();
-    
-    Wire.begin();
-    bme280.parameter.I2CAddress = 0x77;                 //The BME280 is hardwired to use the I2C Address 0x77
-    tsl2591.parameter.I2CAddress = 0x29;
+    // setupSensors();
 
-    //*********************************************************************
-    //*************ADVANCED SETUP - SAFE TO IGNORE!************************        
-    
-    //Here we can configure the TSL2591 Light Sensor
-    //First we set the gain value
-    //Higher gain values are better for dimmer light conditions, but lead to sensor saturation with bright light 
-    //We can choose among four gain values:
-    
-    //0b00:    Low gain mode
-    //0b01:    Medium gain mode
-    //0b10:    High gain mode
-    //0b11:    Maximum gain mode
-    
-    tsl2591.parameter.gain = 0b10;
-    
-    //Longer integration times also helps in very low light situations, but the measurements are slower
-    
-    //0b000:   100ms (max count = 37888)
-    //0b001:   200ms (max count = 65535)
-    //0b010:   300ms (max count = 65535)
-    //0b011:   400ms (max count = 65535)
-    //0b100:   500ms (max count = 65535)
-    //0b101:   600ms (max count = 65535)
-    
-    tsl2591.parameter.integration = 0b000;    
-    
-    //The values for the gain and integration times are written transfered to the sensor through the function config_TSL2591
-    //This function powers the device ON, then configures the sensor and finally powers the device OFF again 
-       
-    tsl2591.config_TSL2591();
-    
-    
-
-    //*********************************************************************
-    //*************ADVANCED SETUP - SAFE TO IGNORE!************************
-    
-    //Now choose on which mode your device will run
-    //On doubt, just leave on normal mode, that's the default value
-    
-    //0b00:     In sleep mode no measurements are performed, but power consumption is at a minimum
-    //0b01:     In forced mode a single measured is performed and the device returns automatically to sleep mode
-    //0b11:     In normal mode the sensor measures continually (default value)
-    
-    bme280.parameter.sensorMode = 0b11;                   //Choose sensor mode
-    
-    
-    
-    //*********************** TSL2591 *************************************
-    //*************ADVANCED SETUP - SAFE TO IGNORE!************************
-    
-    //Great! Now set up the internal IIR Filter
-    //The IIR (Infinite Impulse Response) filter suppresses high frequency fluctuations
-    //In short, a high factor value means less noise, but measurements are also less responsive
-    //You can play with these values and check the results!
-    //In doubt just leave on default
-    
-    //0b000:      factor 0 (filter off)
-    //0b001:      factor 2
-    //0b010:      factor 4
-    //0b011:      factor 8
-    //0b100:      factor 16 (default value)
-    
-    bme280.parameter.IIRfilter = 0b100;                    //Setup for IIR Filter
-    
-    
-    
-    //************************** BME280 ***********************************
-    //*************ADVANCED SETUP - SAFE TO IGNORE!************************
-    
-    //Next you'll define the oversampling factor for the humidity measurements
-    //Again, higher values mean less noise, but slower responses
-    //If you don't want to measure humidity, set the oversampling to zero
-    
-    //0b000:      factor 0 (Disable humidity measurement)
-    //0b001:      factor 1
-    //0b010:      factor 2
-    //0b011:      factor 4
-    //0b100:      factor 8
-    //0b101:      factor 16 (default value)
-    
-    bme280.parameter.humidOversampling = 0b101;            //Setup Humidity Oversampling
-    
-    
-    
-    //************************** BME280 ***********************************
-    //*************ADVANCED SETUP - SAFE TO IGNORE!************************
-    
-    //Now define the oversampling factor for the temperature measurements
-    //You know now, higher values lead to less noise but slower measurements
-    
-    //0b000:      factor 0 (Disable temperature measurement)
-    //0b001:      factor 1
-    //0b010:      factor 2
-    //0b011:      factor 4
-    //0b100:      factor 8
-    //0b101:      factor 16 (default value)
-    
-    bme280.parameter.tempOversampling = 0b101;             //Setup Temperature Ovesampling
-    
-    
-    
-    //************************** BME280 ***********************************
-    //*************ADVANCED SETUP - SAFE TO IGNORE!************************
-    
-    //Finally, define the oversampling factor for the pressure measurements
-    //For altitude measurements a higher factor provides more stable values
-    //On doubt, just leave it on default
-    
-    //0b000:      factor 0 (Disable pressure measurement)
-    //0b001:      factor 1
-    //0b010:      factor 2
-    //0b011:      factor 4
-    //0b100:      factor 8
-    //0b101:      factor 16 (default value)
-    
-    bme280.parameter.pressOversampling = 0b101;            //Setup Pressure Oversampling 
-    
-    
-    
-    //************************** BME280 ***********************************
-    //*************ADVANCED SETUP - SAFE TO IGNORE!************************
-    
-    //For precise altitude measurements please put in the current pressure corrected for the sea level
-    //On doubt, just leave the standard pressure as default (1013.25 hPa)
-    
-    bme280.parameter.pressureSeaLevel = 1013.25;           //default value of 1013.25 hPa
-    
-    //Now write here the current average temperature outside (yes, the outside temperature!)
-    //You can either use the value in Celsius or in Fahrenheit, but only one of them (comment out the other value)
-    //In order to calculate the altitude, this temperature is converted by the library into Kelvin
-    //For slightly less precise altitude measurements, just leave the standard temperature as default (15°C)
-    //Remember, leave one of the values here commented, and change the other one!
-    //If both values are left commented, the default temperature of 15°C will be used
-    //But if both values are left uncommented, then the value in Celsius will be used    
-    
-    bme280.parameter.tempOutsideCelsius = 20;              //default value of 20°C
-    //bme280.parameter.tempOutsideFahrenheit = 59;           //default value of 59°F
-
-
-
-    //*********************************************************************
-    //*************ADVANCED SETUP IS OVER - LET'S CHECK THE CHIP ID!*******
-    
-    if (bme280.init_BME280() != 0x60) {
-        debug("Ops! BME280 could not be found!");
-    } else {
-        debug("BME280 detected!");
-        Particle.variable("temperature", temperature);
-        Particle.variable("pressure", pressure);
-        Particle.variable("humidity", humidity);
-    }
-    
-    if (tsl2591.init_TSL2591() != 0x50) {
-        debug("Ops! TSL2591 could not be found!");
-    } else {
-        debug("TSL2591 detected!");
-        Particle.variable("illuminance", illuminance);
-        brightness = targetBrightness = getBrightness();
-    }
-    
-    IPAddress myIP = WiFi.localIP();
-    
-    measureWorker = new Thread(NULL,  measureLoop);
+    Particle.variable("temperature", temperature);
+    Particle.variable("pressure", pressure);
+    Particle.variable("humidity", humidity);
+    Particle.variable("illuminance", illuminance);
+    brightness = targetBrightness = 127;//getBrightness();
+        
     debug("Initialized");
 
     Particle.connect();
@@ -712,6 +443,4 @@ void loop() {
             }
         }
     }
-
-    os_thread_yield();
 }

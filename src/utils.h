@@ -1,4 +1,5 @@
 #include <widgets/icon_text.h>
+#include <math.h>
 
 #undef retained
 #define retained
@@ -24,7 +25,6 @@ int targetBrightness = 255;
 int luminance = 0;
 int deltaBrightness = 0;
 
-// SunSet sun;
 LEDSystemTheme theme; // Enable custom theme
 
 uint16_t lastTimestamp = UINT16_MAX;
@@ -43,14 +43,6 @@ uint8_t lumCount = 0;
 
 uint8_t lum2brightness(int luminance);
 
-void updateBrightness() {
-#ifdef AUTO_BRIGHTNESS
-    targetBrightness = lum2brightness(luminance);
-#else
-    targetBrightness = BRIGHTNESS_INITIAL;
-#endif
-}
-
 void readLuminance() {
 #ifdef LUMINANCE_SENSOR_PIN
     // compute new brightness
@@ -63,7 +55,7 @@ void readLuminance() {
         lumSum = 0;
         lumCount = 0;
     }
-    updateBrightness();
+    targetBrightness = lum2brightness(luminance);
 #endif
 }
 
@@ -74,10 +66,6 @@ bool renderLoop(Widget* widget) {
 #endif
         readLuminance();
 
-    // take a snapshot of the current state as source for fading
-    // nblend(src, dst, NUM_LEDS, fadeFract);
-    // fadeFract = 0;
-    fadeFract = 255;
     if (widget)
         return widget->render(gfx, iconText);
     else
@@ -85,34 +73,25 @@ bool renderLoop(Widget* widget) {
 }
 
 void updateLeds() {
-    // blend(src, dst, leds, NUM_LEDS, fadeFract);
     FastLED.show(hassBrightness > 1 ? hassBrightness : brightness);
 }
 
 void fadeLoop() {
-    // bool updateRequired = (fadeFract != 255);
-    bool updateRequired = true;
-
-    if (brightness != targetBrightness) {
-        updateRequired = true;
-        if (brightness < targetBrightness) {
-            if (targetBrightness - brightness < FADE_STEP) {
-                brightness = targetBrightness;
-            } else {
-                brightness += FADE_STEP;
-            }
+    if (brightness < targetBrightness) {
+        if (targetBrightness - brightness < FADE_STEP) {
+            brightness = targetBrightness;
         } else {
-            if (brightness - targetBrightness < FADE_STEP) {
-                brightness = targetBrightness;
-            } else {
-                brightness -= FADE_STEP;
-            }
+            brightness += FADE_STEP;
+        }
+    } else if (brightness > targetBrightness) {
+        if (brightness - targetBrightness < FADE_STEP) {
+            brightness = targetBrightness;
+        } else {
+            brightness -= FADE_STEP;
         }
     }
 
-    if (updateRequired) {
-        updateLeds();
-    }
+    updateLeds();
 }
 
 void callbackHass(char* topic, byte* payload, unsigned int length);
@@ -268,9 +247,6 @@ void loopHASS() {
     }
 }
 
-
-uint8_t sensorIdx = 0;
-
 // Open a serial terminal and see the device name printed out
 void handlerDeviceName(const char *topic, const char *data) {
     Serial.println(String("Received device topic ") + topic + "="+data);
@@ -278,12 +254,6 @@ void handlerDeviceName(const char *topic, const char *data) {
         particleDeviceName = data;
         Serial.println(String("Received device name ") + data);
     }
-}
-
-int handlerSetBrightnessDeltaFunction(String data) {
-    deltaBrightness = data.toInt();
-    updateBrightness();
-    return 0;
 }
 
 void initBluetooth() {
