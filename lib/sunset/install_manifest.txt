@@ -1,2 +1,0 @@
-/usr/local/lib/libsunset.so
-/usr/local/include/SunSet.h

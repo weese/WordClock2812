@@ -1,7 +1,0 @@
-/work/Projects/sunset/build/CMakeFiles/install/strip.dir
-/work/Projects/sunset/build/CMakeFiles/edit_cache.dir
-/work/Projects/sunset/build/CMakeFiles/sunset.dir
-/work/Projects/sunset/build/CMakeFiles/rebuild_cache.dir
-/work/Projects/sunset/build/CMakeFiles/list_install_components.dir
-/work/Projects/sunset/build/CMakeFiles/install/local.dir
-/work/Projects/sunset/build/CMakeFiles/install.dir

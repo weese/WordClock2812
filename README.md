@@ -2,6 +2,20 @@
 
 A Particle project named WordClock2812
 
+## Installation
+
+To install all dependent libraries from the Particle libraries system, run the following command in the root folder of this repo:
+
+```
+particle library add Adafruit_GFX_RK
+particle library add Base64RK
+particle library add BlueDot_BME280_TSL2591
+particle library add MQTT
+particle library add SparkJson
+particle library add SparkTime
+particle library add sunset
+```
+
 ## Welcome to your project!
 
 Every new Particle project is composed of 3 important elements that you'll see have been created in your project directory for WordClock2812.

@@ -28,6 +28,11 @@
 // This #include statement was automatically added by the Particle IDE.
 #include <MQTT.h>
 
+retained SerialLogHandler logHandler;
+
+#undef NRF_LOG_INFO
+#define NRF_LOG_INFO Serial.printf
+
 FASTLED_USING_NAMESPACE
 
 String particleDeviceName;
@@ -300,17 +305,14 @@ void setup() {
     gfx.setFont(getFont("m3x6").font);
     delay(5000);
 
-    Particle.subscribe("particle/device/name", handlerDeviceName);
-    Particle.publish("particle/device/name");
+    Particle.subscribe("particle/device/name", handlerDeviceName, MY_DEVICES);
+    Particle.publish("particle/device/name", PRIVATE);
     Particle.subscribe("potty/notification", handlerNotification, MY_DEVICES);
     Particle.function("notify", handlerNotificationFunction);
 
     Particle.subscribe(System.deviceID() + "/" PREFIX_WIDGET, handlerWidget, MY_DEVICES);
     Particle.variable("widgetList", &funcWidgetList);
 
-    theme.setColor(LED_SIGNAL_CLOUD_CONNECTED, 0x00000000); // Set LED_SIGNAL_NETWORK_ON to no color
-    theme.apply(); // Apply theme settings
-    
     connectHassOnDemand();
     // setupSensors();
 
