@@ -1,9 +1,6 @@
 #include <widgets/icon_text.h>
 #include <math.h>
 
-#undef retained
-#define retained
-
 // Log message to cloud, message is a printf-formatted string
 void debug(String message, int value) {
     char msg [50];

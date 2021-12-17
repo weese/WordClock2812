@@ -77,7 +77,7 @@ retained DateWidget         dateWidget(DateWidgetConfig(false, true));
 retained WeatherWidget      weatherWidget(WeatherWidgetConfig{WEATHER_APP_ID, true});
 retained MessageWidget      messageWidget;
 // LastFMWidget                lastFMWidget(LastFMConfig{LASTFM_USER, LASTFM_API_KEY});
-// retained TPM2Widget         tpm2Widget;
+retained TPM2Widget         tpm2Widget;
 
 retained SettingsGeneral settingsGeneral(SettingsGeneralConfig{
     font: 3,
