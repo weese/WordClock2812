@@ -1,2 +1,4 @@
 target
+lib/Adafruit_GFX_RK/
+lib/Base64RK
 src/WordClock2812.cpp
