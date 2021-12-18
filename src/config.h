@@ -8,8 +8,10 @@
 #define FADE_STEP 3
 
 #define AUTO_BRIGHTNESS
-#define MIN_LUMINANCE 0
-#define MIN_BRIGHTNESS 10
+#define MIN_LUMINANCE       210
+#define MAX_LUMINANCE       455
+#define MIN_BRIGHTNESS      10
+#define MAX_BRIGHTNESS      255
 
 /* I'm in the midwest, so this is what I use for my home */
 #define TIMEZONE        1
@@ -24,8 +26,6 @@
 #define FASTLED_PARTICLE_CLOCKLESS_SPI SPI1
 #define SCROLL_DELAY        25
 #define MIN_SCROLL_CYCLES   2
-#define MAX_LUMINANCE       800
-#define MAX_BRIGHTNESS      255
 #define ROTATE_DISPLAY      false
 #define LUM_THRESH          2
 #define GAMMA               2.5

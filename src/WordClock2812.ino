@@ -77,7 +77,7 @@ retained DateWidget         dateWidget(DateWidgetConfig(false, true));
 retained WeatherWidget      weatherWidget(WeatherWidgetConfig{WEATHER_APP_ID, true});
 retained MessageWidget      messageWidget;
 // LastFMWidget                lastFMWidget(LastFMConfig{LASTFM_USER, LASTFM_API_KEY});
-retained TPM2Widget         tpm2Widget;
+// retained TPM2Widget         tpm2Widget;
 
 retained SettingsGeneral settingsGeneral(SettingsGeneralConfig{
     font: 3,
@@ -235,69 +235,16 @@ void handlerWidget(const char *event, const char *data) {
 #endif
 }
 
-double illuminance = 0;
-double temperature = 0;
-double pressure = 0;
-double humidity = 0;
-
 // uint8_t getBrightness();
 void callbackHass(char* topic, byte* payload, unsigned int length);
 
 // MQTT clients (connecting to Losant and Home Assistant brokers)
-MQTT client(LOSANT_BROKER, 1883, NULL);
 Mutex systemLock = Mutex();
-
-bool connectOnDemand() {
-    if (client.isConnected())
-        return true;
-    
-    systemLock.lock();
-    client.connect(
-        LOSANT_DEVICE_ID,
-        LOSANT_ACCESS_KEY,
-        LOSANT_ACCESS_SECRET);
-    
-    bool bConn = client.isConnected();
-    if (bConn) {
-        debug("Connected to Losant");
-        client.subscribe(MQTT_TOPIC_COMMAND);
-    }
-    systemLock.unlock();
-    return bConn;
-}
-
-void loopLosant() {
-    if (!connectOnDemand()) {
-        return;
-    }
-
-    // Build the json payload:
-    // { “data” : { “temperature” : val, "humidity": val, “pressure” : val, “illuminance” : val }}
-    StaticJsonBuffer<200> jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
-    JsonObject& state = jsonBuffer.createObject();
-    state["temperature"] = temperature;
-    state["humidity"] = humidity;
-    state["pressure"] = pressure;
-    state["illuminance"] = illuminance;
-    root["data"] = state;
-
-    // Get JSON string
-    char buffer[300];
-    root.printTo(buffer, sizeof(buffer));
-
-    // Loop the MQTT client
-    systemLock.lock();
-    client.loop();
-    client.publish(MQTT_TOPIC_STATE, buffer);
-    systemLock.unlock();
-}
 
 void setupSensors();
 
 void setup() {
     startup();
-    LOG(INFO, "Started");
     FastLED.addLeds<PIXEL_TYPE, PIXEL_PIN>(gfx.leds, gfx.size());//.setCorrection(TypicalSMD5050);
     FastLED.clear();
     FastLED.show();
@@ -314,15 +261,9 @@ void setup() {
     Particle.variable("widgetList", &funcWidgetList);
 
     connectHassOnDemand();
-    // setupSensors();
+    setupSensors();
 
-    Particle.variable("temperature", temperature);
-    Particle.variable("pressure", pressure);
-    Particle.variable("humidity", humidity);
-    Particle.variable("illuminance", illuminance);
-    brightness = targetBrightness = 127;//getBrightness();
-        
-    debug("Initialized");
+    brightness = targetBrightness = 10;
 
     Particle.connect();
 }
@@ -330,17 +271,14 @@ void setup() {
 void onConnect() {
     LOG(INFO, "Connected");
     // Print your device IP Address via serial
-    Serial.printf("Application>\tWifi IP: %s\n", WiFi.localIP().toString().c_str());
 
     theme.setColor(LED_SIGNAL_CLOUD_CONNECTED, 0x00000000); // Set LED_SIGNAL_NETWORK_ON to no color
     theme.apply(); // Apply theme settings
 
     // connectHassOnDemand();
     // setupSSDP();
-    for (unsigned i = 0; i < (sizeof(widgets) / sizeof(Widget*)); ++i) {
-        LOG(INFO, "onConnect(%i)", i);
+    for (unsigned i = 0; i < (sizeof(widgets) / sizeof(Widget*)); ++i)
         widgets[i]->onConnect();
-    }
 }
 
 void loop() {
@@ -419,10 +357,14 @@ void loop() {
                 // If not, cycle through regular widgets if necessary
                 if (activeWidget == nextWidget) {
                     if (highestUrgency == normal && iconText.needTransition()) {
-                        do {
-                            nextWidget = nextLoopWidget;
-                            nextLoopWidget = (nextLoopWidget + 1) % loopWidgets;
-                        } while (widgets[nextWidget]->urgency() == silent);
+                        if (sleepMode())
+                            nextWidget = 0;
+                        else {
+                            do {
+                                nextWidget = nextLoopWidget;
+                                nextLoopWidget = (nextLoopWidget + 1) % loopWidgets;
+                            } while (widgets[nextWidget]->urgency() == silent);
+                        }
                     } else if (highestUrgency == high) {
                         iconText.resetTimer();
                     }

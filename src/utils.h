@@ -16,11 +16,8 @@ retained HttpClient http;
 retained FastLED_Matrix<11, 10, RowWise<4> > gfx;
 IconText iconText(http, 10, MIN_SCROLL_CYCLES, SCROLL_DELAY, ROTATE_DISPLAY);
 
-fract8 fadeFract = 255;
 fract8 brightness = 255;
 int targetBrightness = 255;
-int luminance = 0;
-int deltaBrightness = 0;
 
 LEDSystemTheme theme; // Enable custom theme
 
@@ -35,13 +32,14 @@ bool hassOn = false;
 // reset the system after 10 seconds if the application is unresponsive
 // ApplicationWatchdog wd(10000, System.reset);
 
+#ifdef LUMINANCE_SENSOR_PIN
+int luminance = 0;
 uint32_t lumSum = 0;
 uint8_t lumCount = 0;
 
 uint8_t lum2brightness(int luminance);
 
 void readLuminance() {
-#ifdef LUMINANCE_SENSOR_PIN
     // compute new brightness
     lumSum += analogRead(LUMINANCE_SENSOR_PIN);
     if (++lumCount == 4) {
@@ -53,8 +51,10 @@ void readLuminance() {
         lumCount = 0;
     }
     targetBrightness = lum2brightness(luminance);
-#endif
 }
+#else
+void readLuminance() {}
+#endif
 
 bool renderLoop(Widget* widget) {
 
