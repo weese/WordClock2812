@@ -7,7 +7,6 @@
 #include <HttpClient.h>
 
 // This #include statement was automatically added by the Particle IDE.
-#include <widgets/fastled_matrix_wc.h>
 #include <widgets/widget.h>
 #include <widgets/wordclock.h>
 #include <widgets/date.h>
@@ -96,6 +95,7 @@ retained SettingsGeneral settingsGeneral(SettingsGeneralConfig{
     gamma: GAMMA,
     latitude: LATITUDE,
     longitude: LONGITUDE,
+    scrollDelay: SCROLL_DELAY,
 });
 
 Widget* const widgets[] = {
@@ -357,7 +357,7 @@ void loop() {
                 // If not, cycle through regular widgets if necessary
                 if (activeWidget == nextWidget) {
                     if (highestUrgency == normal && iconText.needTransition()) {
-                        if (sleepMode())
+                        if (inSleepMode())
                             nextWidget = 0;
                         else {
                             do {

@@ -1,3 +1,4 @@
+#include <widgets/fastled_matrix_wc.h>
 #include <widgets/icon_text.h>
 #include <math.h>
 
@@ -14,7 +15,7 @@ void debug(String message) {
 
 retained HttpClient http;
 retained FastLED_Matrix<11, 10, RowWise<4> > gfx;
-IconText iconText(http, 10, MIN_SCROLL_CYCLES, SCROLL_DELAY, ROTATE_DISPLAY);
+IconText iconText(http, 10, MIN_SCROLL_CYCLES, ROTATE_DISPLAY);
 
 fract8 brightness = 255;
 int targetBrightness = 255;

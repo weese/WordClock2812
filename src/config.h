@@ -24,7 +24,7 @@
 #define LONGITUDE           13.29287
 
 #define FASTLED_PARTICLE_CLOCKLESS_SPI SPI1
-#define SCROLL_DELAY        25
+#define SCROLL_DELAY        200
 #define MIN_SCROLL_CYCLES   2
 #define ROTATE_DISPLAY      false
 #define LUM_THRESH          2
