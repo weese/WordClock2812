@@ -22,21 +22,15 @@
 #include <fonts/fonts.h>
 
 // This #include statement was automatically added by the Particle IDE.
-#include <SparkJson.h>
-
-// This #include statement was automatically added by the Particle IDE.
 #include <MQTT.h>
 
-retained SerialLogHandler logHandler;
-
-#undef NRF_LOG_INFO
-#define NRF_LOG_INFO Serial.printf
+// retained SerialLogHandler logHandler;
+// #undef NRF_LOG_INFO
+// #define NRF_LOG_INFO Serial.printf
 
 FASTLED_USING_NAMESPACE
 
 String particleDeviceName;
-
-#include <utils.h>
 
 #define CONNECTION_TIMEOUT 300
 #define LISTENING_TIMEOUT 60
@@ -57,11 +51,6 @@ const char * const iconListening = "17283";
 const char * const iconConnecting = "4503";
 const char * const iconConnected = "17947";
 
-const char * const textOffline = "";
-const char * const textListening = "";
-const char * const textConnecting = "";
-const char * const textConnected = "";
-
 void startup() {
     System.enableFeature(FEATURE_RETAINED_MEMORY);
     Serial.begin(115200);
@@ -76,7 +65,7 @@ retained DateWidget         dateWidget(DateWidgetConfig(false, true));
 retained WeatherWidget      weatherWidget(WeatherWidgetConfig{WEATHER_APP_ID, true});
 retained MessageWidget      messageWidget;
 // LastFMWidget                lastFMWidget(LastFMConfig{LASTFM_USER, LASTFM_API_KEY});
-// retained TPM2Widget         tpm2Widget;
+retained TPM2Widget         tpm2Widget;
 
 retained SettingsGeneral settingsGeneral(SettingsGeneralConfig{
     font: 3,
@@ -104,13 +93,15 @@ Widget* const widgets[] = {
     &weatherWidget,
     // &lastFMWidget,
     &messageWidget,
-    // &tpm2Widget,
+    &tpm2Widget,
     &settingsGeneral
 };
 
 int8_t activeWidget = -1;
 int8_t nextWidget, nextLoopWidget = 0;
 const int loopWidgets = 3;
+
+#include <utils.h>
 
 // Open a serial terminal and see the device name printed out
 void handlerNotification(const char *event, const char *data) {
@@ -235,9 +226,6 @@ void handlerWidget(const char *event, const char *data) {
 #endif
 }
 
-// uint8_t getBrightness();
-void callbackHass(char* topic, byte* payload, unsigned int length);
-
 // MQTT clients (connecting to Losant and Home Assistant brokers)
 Mutex systemLock = Mutex();
 
@@ -253,7 +241,6 @@ void setup() {
     delay(5000);
 
     Particle.subscribe("particle/device/name", handlerDeviceName, MY_DEVICES);
-    Particle.publish("particle/device/name", PRIVATE);
     Particle.subscribe("potty/notification", handlerNotification, MY_DEVICES);
     Particle.function("notify", handlerNotificationFunction);
 
@@ -263,22 +250,19 @@ void setup() {
     connectHassOnDemand();
     setupSensors();
 
-    brightness = targetBrightness = 10;
-
     Particle.connect();
 }
 
 void onConnect() {
     LOG(INFO, "Connected");
-    // Print your device IP Address via serial
 
     theme.setColor(LED_SIGNAL_CLOUD_CONNECTED, 0x00000000); // Set LED_SIGNAL_NETWORK_ON to no color
     theme.apply(); // Apply theme settings
 
-    // connectHassOnDemand();
-    // setupSSDP();
     for (unsigned i = 0; i < (sizeof(widgets) / sizeof(Widget*)); ++i)
         widgets[i]->onConnect();
+
+    Particle.publish("particle/device/name", PRIVATE);
 }
 
 void loop() {
@@ -298,16 +282,16 @@ void loop() {
         lastStateChange = millis();
         switch (state) {
             case OFFLINE:
-                iconText.set(iconOffline, textOffline);
+                iconText.set(iconOffline, "");
                 break;
             case LISTENING:
-                iconText.set(iconListening, textListening);
+                iconText.set(iconListening, "");
                 break;
             case CONNECTING:
-                iconText.set(iconConnecting, textConnecting);
+                iconText.set(iconConnecting, "");
                 break;
             case READY:
-                iconText.set(iconConnected, textConnected);
+                iconText.set(iconConnected, "");
                 break;
             case CONNECTED:
                 onConnect();
@@ -334,13 +318,12 @@ void loop() {
     }
 
     EVERY_N_MILLISECONDS(15) {
-        // loopHASS();
-        // loopSSDP();
         if (renderLoop(activeWidget >= 0 ? widgets[activeWidget] : NULL))
             fadeLoop();
     }
 
     EVERY_N_MILLISECONDS(20) {
+        loopHASS();
         if (brightness > 0) {
             if (Particle.connected()) {
 

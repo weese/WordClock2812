@@ -245,19 +245,13 @@ void setupSensors() {
     //*********************************************************************
     //*************ADVANCED SETUP IS OVER - LET'S CHECK THE CHIP ID!*******
 
-    if (bme280.init_BME280() != 0x60) {
-        debug("Ops! BME280 could not be found!");
-    } else {
-        debug("BME280 detected!");
+    if (bme280.init_BME280() == 0x60) {
         Particle.variable("temperature", temperature);
         Particle.variable("pressure", pressure);
         Particle.variable("humidity", humidity);
     }
     
-    if (tsl2591.init_TSL2591() != 0x50) {
-        debug("Ops! TSL2591 could not be found!");
-    } else {
-        debug("TSL2591 detected!");
+    if (tsl2591.init_TSL2591() == 0x50) {
         Particle.variable("illuminance", illuminance);
     }
 

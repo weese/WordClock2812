@@ -1,6 +1,8 @@
 #ifndef __CONFIG_H_
 #define __CONFIG_H_
 
+// #define DEBUG_ON_LAMATRIX
+
 // IMPORTANT: Set pixel COUNT, PIN and TYPE
 #define PIXEL_PIN D6
 #define PIXEL_TYPE NEOPIXEL
@@ -23,7 +25,12 @@
 #define LATITUDE            52.47257
 #define LONGITUDE           13.29287
 
+#ifdef DEBUG_ON_LAMATRIX
+#define FASTLED_PARTICLE_CLOCKLESS_SPI SPI
+#else
 #define FASTLED_PARTICLE_CLOCKLESS_SPI SPI1
+#endif
+
 #define SCROLL_DELAY        200
 #define MIN_SCROLL_CYCLES   2
 #define ROTATE_DISPLAY      false
