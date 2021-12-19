@@ -35,8 +35,6 @@ LEDSystemTheme theme; // Enable custom theme
 
 // Home Assistent state
 uint16_t hassColorTemp = 325; // pure white
-uint16_t lastTimestamp = UINT16_MAX;
-
 
 bool renderLoop(Widget* widget) {
     if (widget)
@@ -199,7 +197,6 @@ void callbackHass(char* topic, byte* payload, unsigned int length) {
         }
     }
 
-    lastTimestamp = UINT16_MAX;
     announceState(mask);
 }
 
