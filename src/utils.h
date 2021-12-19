@@ -3,6 +3,10 @@
 #include <widgets/icon_text.h>
 #include <math.h>
 
+#define ANNOUNCE_HASS       1
+#define ANNOUNCE_WORDCLOCK  2
+#define ANNOUNCE_SETTINGS   4
+
 // Log message to cloud, message is a printf-formatted string
 void debug(String message, int value) {
     char msg [50];
@@ -61,7 +65,7 @@ void fadeLoop() {
 void callbackHass(char* topic, byte* payload, unsigned int length);
 
 // MQTT clients (connecting to Losant and Home Assistant brokers)
-retained MQTT clientHass(HASS_BROKER, 1883, callbackHass, 500);
+retained MQTT clientHass(HASS_BROKER, 1883, 500, callbackHass);
 
 void sendDiscoveryToken() {
     String topic = HASS_TOPIC_PREFIX;
@@ -71,33 +75,49 @@ void sendDiscoveryToken() {
     String dialects;
     for (unsigned i = 0; i < sizeof(WordClockWidget::DIALECT_LIST) / sizeof(WordClockWidget::DIALECT_LIST[0]); ++i) {
         if (dialects.length() > 0)
-            dialects += ",";
+            dialects += "\",\"";
         dialects += WordClockWidget::DIALECT_LIST[i];
     }
-
-    clientHass.publish(topic, "HELLO", false);
 
     clientHass.publish(topic, String::format(
                 "{\"~\":\"" HASS_TOPIC_PREFIX "%s\",\"name\":\"WordClock\",\"unique_id\":\"%s\","
                 "\"cmd_t\":\"~" HASS_TOPIC_SET_SUFFIX "\",\"stat_t\":\"~" HASS_TOPIC_STATE_SUFFIX "\","
-                "\"schema\":\"\"json\",\"rgb\":true,\"brightness\":false,\"effect\":true,\"effect_list\":[%s]}",
-                particleDeviceName,
-                dialects), true);
+                "\"schema\":\"json\",\"rgb\":true,\"brightness\":false,\"effect\":true,\"effect_list\":[\"%s\"]}",
+                particleDeviceName.c_str(),
+                System.deviceID().c_str(),
+                dialects.c_str()), true);
 }
 
-void sendStateHass() {
-    String topic = HASS_TOPIC_PREFIX;
-    topic += particleDeviceName;
-    topic += HASS_TOPIC_STATE_SUFFIX;
+void announceState(uint8_t mask) {
+    String topic;
+    
+    if (mask & ANNOUNCE_HASS) {
+        topic = HASS_TOPIC_PREFIX;
+        topic += particleDeviceName;
+        topic += HASS_TOPIC_STATE_SUFFIX;
 
-    const SettingsGeneralConfig &config = getGeneralConfig();
-    clientHass.publish(topic, String::format(
-                "{\"color\":{\"r\":%i,\"g\":%i,\"b\":%i},\"color_temp\":%i,\"state\":%s}",
-                config.textColor[0].r,
-                config.textColor[0].g,
-                config.textColor[0].b,
-                hassColorTemp,
-                config.nightShift ? "ON" : "OFF"), true);
+        const SettingsGeneralConfig &config = getGeneralConfig();
+        clientHass.publish(topic, String::format(
+                    "{\"color\":{\"r\":%i,\"g\":%i,\"b\":%i},\"color_temp\":%i,\"state\":\"%s\",\"effect\":\"%s\"}",
+                    config.textColor[0].r,
+                    config.textColor[0].g,
+                    config.textColor[0].b,
+                    hassColorTemp,
+                    config.nightShift ? "OFF" : "ON",
+                    WordClockWidget::DIALECT_LIST[(wordClockWidget.config.dialect << 1) + wordClockWidget.config.fullSentence]), true);
+    }
+    
+    if (mask & ANNOUNCE_WORDCLOCK) {
+        topic = PREFIX_WIDGET_GET_RESPONSE;
+        topic += wordClockWidget.name();
+        Particle.publish(topic, wordClockWidget.configGet(), PRIVATE);
+    }
+
+    if (mask & ANNOUNCE_SETTINGS) {
+        topic = PREFIX_WIDGET_GET_RESPONSE;
+        topic += settingsGeneral.name();
+        Particle.publish(topic, settingsGeneral.configGet(), PRIVATE);
+    }
 }
 
 // From http://www.tannerhelland.com/4435/convert-temperature-rgb-algorithm-code/
@@ -127,20 +147,26 @@ CRGB colorTemperatureToRGB(double kelvin) {
 
 // Callback signature for MQTT subscriptions
 void callbackHass(char* topic, byte* payload, unsigned int length) {
-    JSONValue outerObj = JSONValue::parseCopy((const char *)payload);
+    JSONValue outerObj = JSONValue::parseCopy((const char *)payload, length);
     JSONObjectIterator iter(outerObj);
 
+    uint8_t mask = ANNOUNCE_HASS;
     SettingsGeneralConfig &config = getGeneralConfig();
     while (iter.next()) {
-        if (iter.name() == "state")
-            config.nightShift = (iter.value().toString() != "ON");
+        if (iter.name() == "state") {
+            resetFading();
+            config.nightShift = (iter.value().toString() == "OFF");
+            mask |= ANNOUNCE_SETTINGS;
+        }
 
         if (iter.name() == "brightness") {
             config.dim = false;
             config.brightnessMax = iter.value().toInt();
+            mask |= ANNOUNCE_SETTINGS;
         }
 
         if (iter.name() == "color") {
+            resetFading();
             JSONObjectIterator iterRGB(iter.value());
             while (iterRGB.next()) {
                 if (iterRGB.name() == "r")
@@ -151,12 +177,15 @@ void callbackHass(char* topic, byte* payload, unsigned int length) {
                     config.textColor[0].b = iterRGB.value().toInt();
             }
             config.textColor[1] = config.textColor[0];
+            mask |= ANNOUNCE_SETTINGS;
         }
         
         if (iter.name() == "color_temp") {
+            resetFading();
             hassColorTemp = iter.value().toInt();
             config.textColor[0] = colorTemperatureToRGB(3000000.0 / hassColorTemp - 2600);
             config.textColor[1] = config.textColor[0];
+            mask |= ANNOUNCE_SETTINGS;
         }
 
         if (iter.name() == "effect") {
@@ -166,10 +195,12 @@ void callbackHass(char* topic, byte* payload, unsigned int length) {
                     wordClockWidget.config.fullSentence = (i & 1) == 1;
                 }
             }
+            mask |= ANNOUNCE_WORDCLOCK;
         }
     }
+
     lastTimestamp = UINT16_MAX;
-    sendStateHass();
+    announceState(mask);
 }
 
 bool connectHassOnDemand() {
