@@ -247,7 +247,6 @@ void setup() {
     Particle.subscribe(System.deviceID() + "/" PREFIX_WIDGET, handlerWidget, MY_DEVICES);
     Particle.variable("widgetList", &funcWidgetList);
 
-    connectHassOnDemand();
     setupSensors();
 
     Particle.connect();

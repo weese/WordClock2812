@@ -11,7 +11,6 @@ particle library install --copy Adafruit_GFX_RK
 particle library install --copy Base64RK
 particle library install --copy BlueDot_BME280_TSL2591
 particle library install --copy MQTT
-particle library install --copy SparkJson
 particle library install --copy SparkTime
 particle library install --copy sunset
 ```
