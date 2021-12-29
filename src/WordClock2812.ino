@@ -105,12 +105,16 @@ const int loopWidgets = 3;
 
 // Open a serial terminal and see the device name printed out
 void handlerNotification(const char *event, const char *data) {
-    messageWidget.processNotificationJSON(data);
+    messageWidget.processNotificationJSON(data, strlen(data));
 }
 
 int handlerNotificationFunction(String data) {
-    messageWidget.processNotificationJSON(data.c_str());
+    messageWidget.processNotificationJSON(data.c_str(), data.length());
     return 0;
+}
+
+void callbackMessageWidget(char* topic, byte* payload, unsigned int length) {
+    messageWidget.processNotificationJSON((char *)payload, length);
 }
 
 void getWidgetList(String &list) {
@@ -303,6 +307,8 @@ void loop() {
         case OFFLINE:
             if (millis() - lastStateChange > CONNECTION_TIMEOUT * 1000) {
                 lastStateChange = millis();
+                WiFi.off();
+                WiFi.on();
                 WiFi.connect();
             }
             break;

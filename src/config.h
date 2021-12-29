@@ -48,7 +48,7 @@
 // Topic used to publish state to Losant.
 #define MQTT_TOPIC_STATE "losant/" LOSANT_DEVICE_ID "/state"
 
-
+#define HASS
 #define HASS_BROKER "192.168.100.1"
 #define HASS_ACCESS_USER "mqtt_user"
 #define HASS_ACCESS_PASS "mqtt_pass"
