@@ -68,7 +68,7 @@ retained MessageWidget      messageWidget;
 retained TPM2Widget         tpm2Widget;
 
 retained SettingsGeneral settingsGeneral(SettingsGeneralConfig{
-    font: 3,
+    font: 1,
     nightShift: true,
     dim: true,
     useEuroDSTRule: true,
@@ -305,21 +305,21 @@ void loop() {
 
     switch (state) {
         case OFFLINE:
-            if (millis() - lastStateChange > CONNECTION_TIMEOUT * 1000) {
+            if (millis() - lastStateChange > CONNECTION_TIMEOUT * 1000 && !inSleepMode()) {
                 lastStateChange = millis();
                 WiFi.off();
                 WiFi.on();
                 WiFi.connect();
             }
             break;
-        case CONNECTING:
-            if (millis() - lastStateChange > CONNECTION_TIMEOUT * 1000)
-                WiFi.listen();
-            break;
-        case LISTENING:
-            if (millis() - lastStateChange > LISTENING_TIMEOUT * 1000)
-                WiFi.listen(false);
-            break;
+        // case CONNECTING:
+        //     if (millis() - lastStateChange > CONNECTION_TIMEOUT * 1000)
+        //         WiFi.listen();
+        //     break;
+        // case LISTENING:
+        //     if (millis() - lastStateChange > LISTENING_TIMEOUT * 1000)
+        //         WiFi.listen(false);
+        //     break;
     }
 
     EVERY_N_MILLISECONDS(15) {
@@ -368,6 +368,7 @@ void loop() {
                 if (activeWidget >= 0)
                     widgets[activeWidget]->loop(iconText);
             } else {
+                iconText.invalidate();
                 EVERY_N_MILLISECONDS(10000) {
                     Particle.connect();
                 }

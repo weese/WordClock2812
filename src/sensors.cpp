@@ -4,6 +4,45 @@
 #include "config.h"
 #include <widgets/settings_general.h>
 
+Thread* measureWorker;
+extern int targetBrightness;
+
+
+
+#ifdef LUMINANCE_SENSOR_ANALOG
+
+uint32_t lumSum = 0;
+uint8_t lumCount = 0;
+int illuminance = 0;
+
+os_thread_return_t measureLoop(void* param) {
+    while (true) {
+        // compute new brightness
+        lumSum += analogRead(LUMINANCE_SENSOR_PIN);
+        if (++lumCount == 64) {
+            int newLuminance = lumSum / 64;
+            int delta = newLuminance - illuminance;
+            if (delta < -LUM_THRESH || delta > LUM_THRESH || newLuminance <= MIN_LUMINANCE || newLuminance >= MAX_LUMINANCE)
+                illuminance = newLuminance;
+            lumSum = 0;
+            lumCount = 0;
+        }
+        targetBrightness = lum2brightness(illuminance);
+        os_thread_yield();
+    }
+}
+
+void setupSensors() {
+    Particle.variable("illuminance", illuminance);
+    measureWorker = new Thread(NULL,  measureLoop);
+}
+#endif
+
+
+
+
+#ifdef LUMINANCE_SENSOR_BME280_TSL2591
+
 #define RwReg
 
 #include <Wire.h>
@@ -18,16 +57,15 @@ double temperature = 0;
 double pressure = 0;
 double humidity = 0;
 
-extern int targetBrightness;
 extern Mutex systemLock;
-
-Thread* measureWorker;
-MQTT client(LOSANT_BROKER, 1883, NULL);
 
 uint8_t getBrightness() {
     illuminance = tsl2591.readIlluminance_TSL2591();
     return lum2brightness((int)(log(illuminance + 1) * 50));
 }
+
+#ifdef LOSANT_BROKER
+MQTT client(LOSANT_BROKER, 1883, NULL);
 
 bool connectOnDemand() {
     if (client.isConnected())
@@ -66,6 +104,11 @@ void loopLosant() {
         illuminance));
     systemLock.unlock();
 }
+#else
+
+void loopLosant() {}
+
+#endif
 
 os_thread_return_t measureLoop(void* param) {
     while (true) {
@@ -257,3 +300,4 @@ void setupSensors() {
 
     measureWorker = new Thread(NULL,  measureLoop);
 }
+#endif

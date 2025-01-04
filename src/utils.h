@@ -24,12 +24,16 @@ retained HttpClient http;
 retained FastLED_Matrix<32, 8, ColumnWise> gfx;
 IconText iconText(http, 8, MIN_SCROLL_CYCLES, true);
 #else
+#ifdef HELENE
+retained FastLED_Matrix<11, 10, RowWise<5> > gfx;
+#else
 retained FastLED_Matrix<11, 10, RowWise<4> > gfx;
+#endif
 IconText iconText(http, 10, MIN_SCROLL_CYCLES, ROTATE_DISPLAY);
 #endif
 
 fract8 brightness = 10;
-int targetBrightness = 10;
+int targetBrightness = 50;
 
 LEDSystemTheme theme; // Enable custom theme
 
@@ -78,7 +82,7 @@ void sendDiscoveryToken() {
     }
 
     clientHass.publish(topic, String::format(
-                "{\"~\":\"" HASS_TOPIC_PREFIX "%s\",\"name\":\"WordClock\",\"unique_id\":\"%s\","
+                "{\"~\":\"" HASS_TOPIC_PREFIX "%s\",\"name\":\"" HASS_TOPIC_NAME "\",\"unique_id\":\"%s\","
                 "\"cmd_t\":\"~" HASS_TOPIC_SET_SUFFIX "\",\"stat_t\":\"~" HASS_TOPIC_STATE_SUFFIX "\","
                 "\"schema\":\"json\",\"rgb\":true,\"brightness\":false,\"effect\":true,\"effect_list\":[\"%s\"]}",
                 particleDeviceName.c_str(),
