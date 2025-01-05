@@ -62,7 +62,7 @@
     #define LUMINANCE_SENSOR_ANALOG
     #define LUMINANCE_SENSOR_PIN A0
     #define MIN_LUMINANCE       100
-    #define MAX_LUMINANCE       3000
+    #define MAX_LUMINANCE       4000
     #define MIN_BRIGHTNESS      4
     #define MAX_BRIGHTNESS      255
 #else
